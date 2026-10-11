@@ -247,42 +247,49 @@ preparar_bots() {
             continue
         fi
 
-        local lang_dir=""
         local lang_name=""
+        local cmd_exec=""
+        local bin_out="${DIR_BOTS_BUILD}/${team}"
+
         case "$ext" in
-            py) lang_dir="python3"; lang_name="Python 3" ;;
-            cpp) lang_dir="cpp"; lang_name="C++17" ;;
-            java) lang_dir="java"; lang_name="Java" ;;
+            py) 
+                lang_name="Python 3"
+                cmd_exec="python3 \"${bin_out}\""
+                ;;
+            cpp) 
+                lang_name="C++17"
+                cmd_exec="\"${bin_out}\""
+                ;;
+            java) 
+                lang_name="Java"
+                cmd_exec="java -jar \"${bin_out}\""
+                ;;
             *) 
                 MOTIVOS_EXCLUSAO+=("${team}: Extensao nao suportada (${ext})")
                 continue
                 ;;
         esac
 
-        local path_lang="${DIR_ROOT}/linguagens/${lang_dir}"
-        local build_sh="${path_lang}/orchestrator_build.sh"
-        local run_sh="${path_lang}/run.sh"
-
-        if [[ ! -d "$path_lang" || ! -x "$build_sh" || ! -x "$run_sh" ]]; then
-            MOTIVOS_EXCLUSAO+=("${team}: Pacote de linguagem ausente ou scripts sem permissão em linguagens/${lang_dir}")
-            echo -e "    ${TAG_ERRO} Pacote da linguagem '${lang_dir}' nao encontrado."
+        local build_script="${DIR_ROOT}/wrappers/build_bot.sh"
+        if [[ ! -x "$build_script" ]]; then
+            MOTIVOS_EXCLUSAO+=("${team}: Script wrappers/build_bot.sh ausente ou sem permissao de execucao")
+            echo -e "    ${TAG_ERRO} Script wrappers/build_bot.sh nao encontrado."
             continue
         fi
 
         echo -e "  ${TAG_BUILD} [${lang_name}] Compilando equipe '${team}' (${bname})..."
-        local bin_out="${DIR_BOTS_BUILD}/${team}"
         mkdir -p "${DIR_BOTS_BUILD}"
 
-        # Executa compilacao utilizando o orchestrator_build.sh correspondente
+        # Executa compilacao utilizando o build_bot.sh da raiz
         local err_comp=""
         local exit_comp=0
-        if ! err_comp=$(cd "${path_lang}" && ./orchestrator_build.sh "$arq" "$bin_out" 2>&1); then
+        if ! err_comp=$("${build_script}" "$arq" "$bin_out" 2>&1); then
             exit_comp=1
         fi
 
         if [[ $exit_comp -eq 0 ]]; then
             NOMES_BOTS+=("$team")
-            COMANDOS_BOTS+=("\"${run_sh}\" \"${bin_out}\"")
+            COMANDOS_BOTS+=("${cmd_exec}")
             ARQS_ENTRARAM+=("$bname")
             LANGS_ENTRARAM+=("${lang_name}")
             echo -e "    ${TAG_OK} Preparacao '${lang_name}' concluida -> ${bin_out}"
@@ -359,16 +366,25 @@ executar_batalha() {
 exibir_resumo_e_gerar_json() {
     echo -e "${COR_AZUL}[6/6] Consolidando replay completo da partida (match_frames.json)...${COR_RESET}"
     
-    python3 - << 'EOF' "$DIR_ROOT" "${NOMES_BOTS[@]}"
+    python3 - << 'EOF' "$DIR_ROOT" "${#NOMES_BOTS[@]}" "${NOMES_BOTS[@]}" "${LANGS_ENTRARAM[@]}"
 import sys, os, glob, json, time
 
 dir_root = sys.argv[1]
-nomes_bots = sys.argv[2:]
+n_bots = int(sys.argv[2])
+nomes_bots = sys.argv[3:3 + n_bots]
+langs_bots = sys.argv[3 + n_bots:3 + 2 * n_bots]
 
 replays_dir = os.path.join(dir_root, "replays")
 replay_files = sorted(glob.glob(os.path.join(replays_dir, "partida_*.json")), key=os.path.getmtime, reverse=True)
 match_frames_path = os.path.join(dir_root, "match_frames.json")
-resultado_path = os.path.join(dir_root, "resultado_partida.json")
+resultado_legado_path = os.path.join(dir_root, "resultado_partida.json")
+
+# Remove resultado_partida.json se existir para manter estritamente apenas match_frames.json
+if os.path.isfile(resultado_legado_path):
+    try:
+        os.remove(resultado_legado_path)
+    except Exception:
+        pass
 
 # 1. Carrega o match_frames.json gerado pela engine
 data_frames = {}
@@ -383,7 +399,7 @@ if os.path.isfile(match_frames_path):
     except Exception as e:
         print(f"[AVISO] Erro ao ler match_frames.json da engine: {e}")
 
-# 2. Carrega o resumo estatístico
+# 2. Carrega o resumo da partida da engine
 data_resumo = {}
 if replay_files:
     try:
@@ -401,28 +417,21 @@ def mapear_nome(bot_str):
             return bot_str.replace(tag, nome)
         tag_id = f"Bot ID [{i+1}]"
         if tag_id in bot_str:
-            return bot_str.replace(tag_id, f"Equipe {nome}")
+            return bot_str.replace(tag_id, nome)
     return bot_str
 
 vencedor_original = data_resumo.get("vencedor", data_frames.get("vencedor", "Empate"))
 vencedor_real = mapear_nome(vencedor_original)
 
-destaques_brutos = data_resumo.get("destaques", data_frames.get("destaques", []))
-destaques_formatados = []
-for d in destaques_brutos:
-    log_text = mapear_nome(d.get("log", ""))
-    destaques_formatados.append({
-        "tick": d.get("tick", 0),
-        "tempo_s": d.get("tempo_s", 0.0),
-        "tipo": d.get("tipo", "INFO"),
-        "log": log_text
-    })
-
-participantes_info = []
-for i, nome in enumerate(nomes_bots):
-    participantes_info.append({
+# Associação prévia canônica: id -> nome, linguagem e status
+bots_info = []
+for i in range(n_bots):
+    nome = nomes_bots[i]
+    lang = langs_bots[i] if i < len(langs_bots) else "Desconhecido"
+    bots_info.append({
         "id": i + 1,
-        "equipe": nome,
+        "nome": nome,
+        "lang": lang,
         "vencedor": (vencedor_real == nome)
     })
 
@@ -430,7 +439,7 @@ partida_id = data_resumo.get("partida_id", data_frames.get("partida_id", str(int
 turnos = data_resumo.get("turnos", data_frames.get("turnos", len(frames_lista)))
 duracao_ms = data_resumo.get("duracao_ms", data_frames.get("duracao_ms", int(len(frames_lista) * 100)))
 
-# 3. Monta o JSON consolidado contendo TODOS OS FRAMES DA PARTIDA
+# 3. Monta o JSON unificado match_frames.json (SEM destaques, com associação prévia de bots)
 resultado_final = {
     "config": config_arena,
     "partida_id": partida_id,
@@ -439,18 +448,30 @@ resultado_final = {
     "vencedor": vencedor_real,
     "turnos": turnos,
     "duracao_ms": duracao_ms,
-    "participantes": participantes_info,
-    "destaques": destaques_formatados,
+    "bots": bots_info,
     "frames": frames_lista
 }
 
-# Salva o arquivo canônico match_frames.json com todos os frames e metadados
+# Salva exclusivamente o arquivo canônico match_frames.json
 with open(match_frames_path, 'w', encoding='utf-8') as f:
     json.dump(resultado_final, f, indent=2, ensure_ascii=False)
 
-# Salva também resultado_partida.json com o mesmo conteúdo completo para compatibilidade
-with open(resultado_path, 'w', encoding='utf-8') as f:
-    json.dump(resultado_final, f, indent=2, ensure_ascii=False)
+# 4. Atualiza o replay salvo na pasta replays/ com o nome real e sem destaques
+if replay_files:
+    try:
+        replay_clean = {
+            "partida_id": partida_id,
+            "data_hora": time.strftime("%d/%m/%Y %H:%M:%S"),
+            "status": "concluido",
+            "vencedor": vencedor_real,
+            "turnos": turnos,
+            "duracao_ms": duracao_ms,
+            "bots": bots_info
+        }
+        with open(replay_files[0], 'w', encoding='utf-8') as f:
+            json.dump(replay_clean, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
 
 tamanho_bytes = os.path.getsize(match_frames_path) if os.path.isfile(match_frames_path) else 0
 if tamanho_bytes >= 1048576:
@@ -471,9 +492,9 @@ print("-----------------------|-----------------|----------|-----------")
 print(f"\033[1;32m[STATUS] Gravacao concluida: match_frames.json ({tam_str})\033[0m")
 print(f"\033[1;32m[INFO] Total de frames salvos: {len(frames_lista)} frames\033[0m")
 print("\033[1;36mEquipes participantes:\033[0m")
-for p in participantes_info:
+for p in bots_info:
     venc_tag = " \033[1;32m[Vencedor]\033[0m" if p['vencedor'] else ""
-    print(f"  • Bot {p['id']}: {p['equipe']}{venc_tag}")
+    print(f"  • Bot {p['id']}: {p['nome']} ({p['lang']}){venc_tag}")
 print("\033[1;36m====================================================================\033[0m")
 EOF
 }

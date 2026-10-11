@@ -18,8 +18,8 @@ GSON_JAR=""
 
 if [ -f "$SCRIPT_DIR/gson.jar" ]; then
     GSON_JAR="$SCRIPT_DIR/gson.jar"
-elif [ -f "$SCRIPT_DIR/../../libs/gson-2.10.1.jar" ]; then
-    GSON_JAR="$SCRIPT_DIR/../../libs/gson-2.10.1.jar"
+elif [ -f "$SCRIPT_DIR/../../../libs/gson-2.10.1.jar" ]; then
+    GSON_JAR="$SCRIPT_DIR/../../../libs/gson-2.10.1.jar"
 fi
 
 if [ -n "$GSON_JAR" ]; then
@@ -28,3 +28,4 @@ fi
 
 cp "$SOURCE_FILE" "$EXE_FILE"
 exit 0
+

@@ -1,6 +1,5 @@
 #!/bin/bash
 # Validador Estrutural BOCA (Python)
-# Esse script sera empacotado para o BOCA validar sintaxe e regras da maratona
 SOURCE_FILE="$1"
 EXE_FILE="$2"
 
@@ -19,3 +18,4 @@ python3 -m py_compile "$SOURCE_FILE" || exit 1
 cp "$SOURCE_FILE" "$EXE_FILE"
 chmod +x "$EXE_FILE"
 exit 0
+

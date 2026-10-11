@@ -848,20 +848,7 @@ public:
 
         auto now = std::chrono::system_clock::now().time_since_epoch().count();
 
-        // 2. Monta destaques e momentos narrativos
-        json j_destaques = json::array();
-        for (const auto& m : narracao) {
-            j_destaques.push_back({
-                {"tick", m.tick},
-                {"tempo_s", m.tempo_s},
-                {"tipo", m.tipo},
-                {"alvo_id", m.alvo_id},
-                {"assassino_id", m.assassino_id},
-                {"log", m.texto}
-            });
-        }
-
-        // 3. Exportar o resumo estatístico para a pasta replays/
+        // 2. Exportar o resumo da partida para a pasta replays/
         std::string caminho_resumo = "replays/partida_" + std::to_string(now) + ".json";
         std::ofstream resumo(caminho_resumo);
         if (resumo.is_open()) {
@@ -871,20 +858,18 @@ public:
             j_resumo["vencedor"] = vencedor_nome;
             j_resumo["turnos"] = tick_count;
             j_resumo["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
-            j_resumo["destaques"] = j_destaques;
 
             resumo << j_resumo.dump(2);
             resumo.close();
-            std::cout << "[ENGINE] Resumo estatístico salvo em: " << caminho_resumo << "\n";
+            std::cout << "[ENGINE] Resumo da partida salvo em: " << caminho_resumo << "\n";
         }
 
-        // 4. Exportação do Arquivo JSON de Replay Completo COM TODOS OS FRAMES
+        // 3. Exportação do Arquivo JSON de Replay Completo COM TODOS OS FRAMES
         match_replay["partida_id"] = std::to_string(now);
         match_replay["status"] = "concluido";
         match_replay["vencedor"] = vencedor_nome;
         match_replay["turnos"] = tick_count;
         match_replay["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
-        match_replay["destaques"] = j_destaques;
 
         std::ofstream file("match_frames.json");
         if (file.is_open()) {

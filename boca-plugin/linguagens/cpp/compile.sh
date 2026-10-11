@@ -20,9 +20,9 @@ INC_DIR=""
 if [ -f "$SCRIPT_DIR/cpp_header.hpp" ]; then
     HEADER_FILE="$SCRIPT_DIR/cpp_header.hpp"
     INC_DIR="$SCRIPT_DIR"
-elif [ -f "$SCRIPT_DIR/../../wrappers/cpp_header.hpp" ]; then
-    HEADER_FILE="$SCRIPT_DIR/../../wrappers/cpp_header.hpp"
-    INC_DIR="$SCRIPT_DIR/../../engine"
+elif [ -f "$SCRIPT_DIR/../../../wrappers/cpp_header.hpp" ]; then
+    HEADER_FILE="$SCRIPT_DIR/../../../wrappers/cpp_header.hpp"
+    INC_DIR="$SCRIPT_DIR/../../../engine"
 fi
 
 if [ -n "$HEADER_FILE" ]; then
@@ -31,3 +31,4 @@ else
     g++ -O2 -std=c++17 -fsyntax-only "$SOURCE_FILE" || exit 1
 fi
 exit 0
+

@@ -78,23 +78,26 @@ public class Solution {
 ---
 
 ## 3. Estrutura de Diretórios
-
+ 
 ```
 battle-orchestrator/
-├── engine/                   # Motor de simulação em C++17 (main.cpp e json.hpp)
-├── libs/                     # Dependências locais (gson-2.10.1.jar)
-├── wrappers/                 # Templates de I/O blindados (Python, C++, Java)
-├── linguagens/               # Módulos de compilação modular por linguagem
-│   ├── python3/              # orchestrator_build.sh, boca_compile.sh, run.sh
-│   ├── cpp/                  # orchestrator_build.sh, boca_compile.sh, run.sh
-│   └── java/                 # orchestrator_build.sh, boca_compile.sh, run.sh
-├── starter_kits/             # Modelos limpos distribuídos para os alunos
-├── mock_bots/                # Bots de teste (intermediários estratégicos e maliciosos)
-├── submissoes/               # Pasta de entrada oficial para execução da partida
-├── out_boca_packages/        # Pacotes .tgz gerados para upload no painel do BOCA
-├── empacotar_pro_boca.sh     # Script para gerar pacotes de validação do BOCA
-├── script.sh                 # Orquestrador executável principal da partida
-└── README.md                 # Esta documentação canônica
+├── boca-plugin/           # Plugin de integração e empacotamento com o BOCA
+│   ├── empacotar_pro_boca.sh # Gera os pacotes .tgz de cada linguagem
+│   ├── out_boca_packages/    # Arquivos .tgz finais para upload no painel BOCA
+│   └── linguagens/           # Scripts de validação e compilação do BOCA (compile.sh)
+├── engine/                # Motor de simulação em C++17 (main.cpp e json.hpp)
+├── libs/                  # Dependências locais (gson-2.10.1.jar)
+├── wrappers/              # Templates de I/O e scripts de build protegidos
+│   ├── build_bot.sh       # Construtor interno para C++, Python e Java (evita conflito com o BOCA)
+│   ├── cpp_header.hpp     # Cabeçalho transparente C++
+│   ├── cpp_footer.cpp     # Rodapé/main() transparente C++
+│   ├── wrapper.py         # Executor transparente Python
+│   └── wrapper.java       # Runner reflexivo transparente Java
+├── starter-kits/          # Modelos simples e minimalistas para os competidores
+├── mock_bots/             # Bots de teste (intermediários, estratégias completas e maliciosos)
+├── submissoes/            # Pasta de entrada oficial para execução da partida
+├── script.sh              # ÚNICO script .sh na raiz (ponto de entrada da Arena BOCA)
+└── README.md              # Esta documentação canônica
 ```
 
 ---
@@ -113,9 +116,15 @@ battle-orchestrator/
    ```
 3. O orquestrador exibirá o inventário pré/pós compilação, transmitirá os eventos da partida no terminal e exportará o replay completo em `match_frames.json`.
 
+### Build Manual de um Bot (Opcional):
+Para compilar uma submissão individualmente fora da partida:
+```bash
+./wrappers/build_bot.sh submissoes/bot.py build/bots/bot
+```
+
 ### Empacotamento para o BOCA:
 Para gerar os pacotes `.tgz` que os administradores sobem na aba *Languages* do BOCA (que validam a presença da função `pensar()` e bloqueiam chamadas indevidas):
 ```bash
-./empacotar_pro_boca.sh
+cd boca-plugin && ./empacotar_pro_boca.sh
 ```
-Os arquivos gerados estarão em `out_boca_packages/`.
+Os arquivos gerados estarão em `boca-plugin/out_boca_packages/`.

@@ -1,0 +1,25 @@
+{
+  "destaques": [
+    {
+      "alvo_id": 1,
+      "assassino_id": -1,
+      "log": "[080.0s | Tick 0800] [ZONA] Bot ID [1] foi consumido pela tempestade de radiacao!",
+      "tempo_s": 80.0,
+      "tick": 800,
+      "tipo": "KILL_ZONA"
+    },
+    {
+      "alvo_id": -1,
+      "assassino_id": -1,
+      "log": "[080.1s | Tick 0801] [FIM] Combate encerrado! Processando resultados...",
+      "tempo_s": 80.10000000000001,
+      "tick": 801,
+      "tipo": "INFO"
+    }
+  ],
+  "duracao_ms": 80100,
+  "partida_id": "1791741341382608378",
+  "status": "concluido",
+  "turnos": 801,
+  "vencedor": "Bot_2"
+}

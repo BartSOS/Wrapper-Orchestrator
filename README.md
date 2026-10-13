@@ -15,7 +15,7 @@ códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (at�
 - **Diretório de entrada:** `submissoes/` (padrão) ou o diretório passado como 1º argumento de `script.sh`.
 - **Extensões aceitas na partida:** `.c` (C99), `.cpp` (C++20), `.java`, `.py`. Arquivos vazios são descartados.
 - O `build_bot.sh` é chamado via `bash`: a permissão `+x` se perde quando o BOCA extrai o `engine.zip`.
-- **Capacidade:** de 2 a **20 bots** por partida. Os excedentes são listados como excluídos.
+- **Capacidade:** de 2 a **20 bots** por partida (limite do evento). Os excedentes são listados como excluídos. A variável de ambiente `TOPCOM_MAX_BOTS` altera o limite no `script.sh` e na engine; o `--benchmark` usa isso para medir acima de 20.
 - **Dentro do BOCA:** o `EngineExecutionService.php` extrai o `engine.zip`, copia o código ativo de cada equipe como `submissoes/<username>.<ext>` e executa `./script.sh`.
 
 ---
@@ -175,12 +175,19 @@ python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --be
 ```
 Roda o `script.sh` dos fontes atuais dentro do contêiner `topcom-boca-web-1`.
 
-**Medições (12/10/2026):**
-- a partida em si leva 0,3 a 0,9 s de tempo real, mesmo com 20 bots;
-- o custo é a compilação, cerca de 1 s por bot (~23 s com 20 bots);
-- nenhuma desconexão ou timeout;
-- memória do contêiner ~450 MB;
-- acima de 20, os excedentes são excluídos, mas **ainda assim compilados**.
+**Medições (13/10/2026, VM de 12 núcleos e 3,7 GB, rotação dos 6 bots-base):**
+
+| Bots | Compilação | Partida | Total | JSON | JSON no zip |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 | 49,6 s | 1,0 s | 59,5 s | 5,0 MB | 0,15 MB |
+| 40 | 98,7 s | 1,9 s | 108,9 s | 9,4 MB | 0,27 MB |
+| 60 | 153,3 s | 2,3 s | 163,8 s | 5,5 MB | 0,25 MB |
+
+- nenhuma desconexão ou timeout até 60 bots; a partida usa de 1,3 a 7,5 ms por tick;
+- o custo é a compilação, **sequencial**: C ~5,0 s, C++ ~4,3 s, Java ~1,1 s e Python ~0 s por bot, mais ~8 s da engine;
+- o JSON cresce com frames × bots (~0,3 KB por bot por frame, com indentação) e comprime ~30×;
+- acima de ~56 bots, o círculo de spawn (raio 360) fica mais apertado que o diâmetro do tanque (40);
+- acima do limite, os excedentes são excluídos, mas **ainda assim compilados**.
 
 ### Compilar um único bot
 ```bash

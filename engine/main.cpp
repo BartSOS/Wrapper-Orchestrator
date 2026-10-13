@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <random>
 #include <map>
+#include <cstdlib>
 
 // Dependências POSIX para IPC e Subprocessos
 #include <unistd.h>
@@ -44,6 +45,7 @@ namespace Config {
     constexpr double ARENA_HEIGHT = 1000.0;
     constexpr int    MAX_TICKS = 1500;
     constexpr double TICK_DT = 0.1;           // 10 Hz (0.1s por tick)
+    constexpr int    MAX_BOTS_PADRAO = 20;    // limite do evento; TOPCOM_MAX_BOTS sobrepõe (benchmark)
 
     constexpr double TANK_RADIUS = 20.0;
     constexpr double TANK_MAX_SPEED = 50.0;   // unidades/s
@@ -340,8 +342,8 @@ public:
     ArenaEngine(const std::vector<std::string>& bot_commands) {
         rng.seed(std::chrono::system_clock::now().time_since_epoch().count());
         
-        // Inicia e posiciona os tanques distribuídos em círculo na arena (até 20 bots)
-        size_t total_bots = std::min(bot_commands.size(), size_t(20));
+        // Inicia e posiciona os tanques distribuídos em círculo na arena (main já aplicou o limite)
+        size_t total_bots = bot_commands.size();
         double center_x = Config::ARENA_WIDTH / 2.0;
         double center_y = Config::ARENA_HEIGHT / 2.0;
         double spawn_radius = 360.0;
@@ -910,13 +912,20 @@ public:
 int main(int argc, char* argv[]) {
     signal(SIGPIPE, SIG_IGN);
     if (argc < 2) {
-        std::cerr << "Uso: " << argv[0] << " \"comando_bot_1\" \"comando_bot_2\" ... [até 20 bots]\n";
+        std::cerr << "Uso: " << argv[0] << " \"comando_bot_1\" \"comando_bot_2\" ... [até " << Config::MAX_BOTS_PADRAO
+                  << " bots; TOPCOM_MAX_BOTS altera o limite]\n";
         std::cerr << "Exemplo: " << argv[0] << " \"python3 bot.py\" \"./bot_cpp\" \"java -cp . Bot\"\n";
         return 1;
     }
 
+    int max_bots = Config::MAX_BOTS_PADRAO;
+    if (const char* env = std::getenv("TOPCOM_MAX_BOTS")) {
+        int v = std::atoi(env);
+        if (v > 0) max_bots = v;
+    }
+
     std::vector<std::string> bot_commands;
-    for (int i = 1; i < argc && i <= 20; ++i) {
+    for (int i = 1; i < argc && i <= max_bots; ++i) {
         bot_commands.push_back(argv[i]);
     }
 

@@ -32,6 +32,7 @@ ENGINE_BIN="${DIR_BUILD}/engine"
 # --- Configurações de Segurança e Limites ---
 TIMEOUT_SEG=30                # Tempo máximo de execução por partida/bot
 MEM_LIMIT_KB=2048000
+MAX_BOTS="${TOPCOM_MAX_BOTS:-20}"   # Limite de bots por partida (20 no evento; o benchmark pode sobrepor)
 
 # --- Paleta de Cores ANSI e Tags Padronizadas (Sem Emojis) ---
 COR_VERDE='\033[1;32m'
@@ -242,9 +243,9 @@ preparar_bots() {
         local bname="${CAND_NOMES[$i]}"
         local ext="${CAND_EXTS[$i]}"
 
-        # Limite máximo de até 20 bots por partida na arena
-        if [[ ${#NOMES_BOTS[@]} -ge 20 ]]; then
-            MOTIVOS_EXCLUSAO+=("${team}: Excedeu limite maximo da partida (20 bots)")
+        # Limite máximo de bots por partida na arena
+        if [[ ${#NOMES_BOTS[@]} -ge ${MAX_BOTS} ]]; then
+            MOTIVOS_EXCLUSAO+=("${team}: Excedeu limite maximo da partida (${MAX_BOTS} bots)")
             continue
         fi
 
@@ -327,7 +328,7 @@ preparar_bots() {
         done
     fi
     echo -e "--------------------------------------------------------------------------------"
-    echo -e "Total de IAs que entraram na partida: ${COR_VERDE}${#NOMES_BOTS[@]}${COR_RESET} / 20 max"
+    echo -e "Total de IAs que entraram na partida: ${COR_VERDE}${#NOMES_BOTS[@]}${COR_RESET} / ${MAX_BOTS} max"
 
     if [[ ${#MOTIVOS_EXCLUSAO[@]} -gt 0 ]]; then
         echo ""

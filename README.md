@@ -1,6 +1,6 @@
 # Battle Orchestrator — Arena TopCom
 
-O **Battle Orchestrator** é o motor da Arena: recebe os códigos das equipes, injeta os wrappers de I/O, compila, isola e executa os bots, roda a **Engine de física em C++17** e gera o replay `match_frames.json`. O BOCA transforma esse replay em experiência visual no pacote Unity.
+O **Battle Orchestrator** é o motor da Arena: recebe os códigos das equipes, injeta os wrappers de I/O, compila, isola e executa os bots, roda a **Engine de física em C++20** e gera o replay `match_frames.json`. O BOCA transforma esse replay em experiência visual no pacote Unity.
 
 O módulo é **autônomo**: roda igual na linha de comando (fora do BOCA) e dentro do contêiner `topcom-boca-web-1`, quando um juiz ou admin clica em **Executar Engine**.
 
@@ -13,8 +13,8 @@ códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (at�
 ## 1. Contrato de Entrada
 
 - **Diretório de entrada:** `submissoes/` (padrão) ou o diretório passado como 1º argumento de `script.sh`.
-- **Extensões aceitas na partida hoje:** `.py`, `.cpp`, `.java`. Arquivos vazios são descartados.
-  > **C é linguagem oficial**, mas o suporte ainda não existe: falta o wrapper C, a compilação no `build_bot.sh`, a detecção de `.c` no `script.sh` e o validador do BOCA (Fase 2). Hoje um `.c` é ignorado pela Arena. O contrato já está definido (veja abaixo).
+- **Extensões aceitas na partida:** `.c` (C99), `.cpp` (C++20), `.java`, `.py`. Arquivos vazios são descartados.
+- O `build_bot.sh` é chamado via `bash`: a permissão `+x` se perde quando o BOCA extrai o `engine.zip`.
 - **Capacidade:** de 2 a **20 bots** por partida. Os excedentes são listados como excluídos.
 - **Dentro do BOCA:** o `EngineExecutionService.php` extrai o `engine.zip`, copia o código ativo de cada equipe como `submissoes/<username>.<ext>` e executa `./script.sh`.
 
@@ -50,7 +50,7 @@ Campos ausentes assumem 0 ou `false`; a torre mantém o ângulo atual.
 
 ### Modelos por linguagem
 
-**C (C99)**: o cabeçalho `wrappers/arena.h` é injetado automaticamente e define as structs `Estado`, `Tanque`, `Inimigo`, `Hazard`, `Item` e `Acao`, além das funções auxiliares `distancia()`, `angulo_para()`, `normalizar_angulo()` e `diferenca_angulo()`. *(suporte na Arena: Fase 2)*
+**C (C99)**: o cabeçalho `wrappers/arena.h` é injetado automaticamente e define as structs `Estado`, `Tanque`, `Inimigo`, `Hazard`, `Item` e `Acao`, além das funções auxiliares `distancia()`, `angulo_para()`, `normalizar_angulo()` e `diferenca_angulo()`. O código do aluno é compilado com `gcc -std=c99` e ligado ao wrapper interno `wrappers/c_wrapper.cpp` (C++20), que converte o JSON nas structs. `printf()` do aluno vai para o `stderr` e não corrompe a comunicação. Listas maiores que `MAX_INIMIGOS`/`MAX_HAZARDS`/`MAX_ITENS` são truncadas.
 ```c
 Acao pensar(const Estado *e) {
     Acao a = {0};
@@ -70,7 +70,7 @@ def pensar(estado):
     return {"throttle": 1.0, "turn": 0.5, "turret_angle": 90.0, "shoot": True, "shield": False}
 ```
 
-**C++17**: o código é concatenado entre `cpp_header.hpp` (que já expõe `json`, da nlohmann) e `cpp_footer.cpp` (que contém o `main`).
+**C++20**: o código é concatenado entre `cpp_header.hpp` (que já expõe `json`, da nlohmann) e `cpp_footer.cpp` (que contém o `main`).
 ```cpp
 json pensar(const json& estado) {
     json acao;
@@ -140,7 +140,7 @@ Isolamento de cada bot (`script.sh`): `timeout` de **30 s de tempo real** e `uli
 battle-orchestrator/
 ├── script.sh              # Ponto de entrada da Arena
 ├── engine/                # main.cpp (física/juiz) + nlohmann/json.hpp
-├── wrappers/              # build_bot.sh, wrapper.py, wrapper.java, cpp_header.hpp, cpp_footer.cpp, wrapper.cpp, arena.h (contrato C)
+├── wrappers/              # build_bot.sh, wrapper.py, wrapper.java, cpp_header.hpp, cpp_footer.cpp, wrapper.cpp, arena.h (contrato C), c_wrapper.cpp (I/O dos bots C)
 ├── libs/                  # gson-2.10.1.jar
 ├── boca-plugin/           # Validadores de linguagem para o BOCA
 │   ├── linguagens/{c,cpp,java,python3}/compile.sh
@@ -170,8 +170,8 @@ Resultado: log no terminal e `match_frames.json` na raiz.
 
 ### Testar no runtime do evento (recomendado)
 ```bash
-python3 ../.agents/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --testar             # partida com os bots-base
-python3 ../.agents/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --benchmark 4,8,20   # capacidade/tempo
+python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --testar             # partida com os bots-base
+python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --benchmark 4,8,20   # capacidade/tempo
 ```
 Roda o `script.sh` dos fontes atuais dentro do contêiner `topcom-boca-web-1`.
 
@@ -189,7 +189,7 @@ Roda o `script.sh` dos fontes atuais dentro do contêiner `topcom-boca-web-1`.
 
 ### Gerar o `engine.zip` para o BOCA
 ```bash
-python3 ../.agents/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --empacotar
+python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --empacotar
 ```
 O pacote leva `script.sh`, `engine/`, `wrappers/` e `libs/` e é gravado em `Boca-Game-Jam-Pet/boca-master/src/private/engine/contest_1/engine.zip`. Depois, envie-o pela aba **Desafio** ou sincronize com `sync_and_test.py`.
 

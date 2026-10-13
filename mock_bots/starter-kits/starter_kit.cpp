@@ -1,5 +1,5 @@
 // =============================================================================
-// TOPCOM ARENA - STARTER KIT C++17
+// TOPCOM ARENA - STARTER KIT C++20
 // =============================================================================
 // Instruções para o competidor:
 // - Implemente apenas a função pensar(const json& estado).

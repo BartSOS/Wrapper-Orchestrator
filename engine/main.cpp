@@ -2,9 +2,9 @@
  * ============================================================================
  * ENGINE.CPP - Motor de Simulação e Juiz de Arena Top-Down (Game Jam IA)
  * ============================================================================
- * Padrão: C++17 (POSIX Linux)
+ * Padrão: C++20 (POSIX Linux)
  * Dependência: <nlohmann/json.hpp>
- * Compilação: g++ -O3 -std=c++17 engine.cpp -o engine
+ * Compilação: g++ -O3 -std=c++20 engine.cpp -o engine
  * Execução:   ./engine "python3 bot1.py" "./bot_cpp" "java -cp . Bot"
  * ============================================================================
  */

@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * TOPCOM ARENA - STARTER KIT C++17
+ * TOPCOM ARENA - STARTER KIT C++20
  * ============================================================================
  * INSTRUÇÕES PARA O PARTICIPANTE:
  * - Não crie a função main() nem utilize cin/cout.

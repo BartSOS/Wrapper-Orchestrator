@@ -29,11 +29,16 @@ for lang_dir in */; do
         printf '#!/bin/bash\nexit 0\n' > "${PKG_TMP}/run"
         chmod +x "${PKG_TMP}/run.sh" "${PKG_TMP}/run"
         
-        # Se C++ ou C, copia o header e json.hpp
-        if [ "$lang" = "cpp" ] || [ "$lang" = "c" ]; then
+        # C++: header com o tipo json + nlohmann/json.hpp
+        if [ "$lang" = "cpp" ]; then
             cp "${ROOT_DIR}/wrappers/cpp_header.hpp" "${PKG_TMP}/"
             mkdir -p "${PKG_TMP}/nlohmann"
             cp "${ROOT_DIR}/engine/nlohmann/json.hpp" "${PKG_TMP}/nlohmann/"
+        fi
+
+        # C: interface arena.h (structs Estado/Acao)
+        if [ "$lang" = "c" ]; then
+            cp "${ROOT_DIR}/wrappers/arena.h" "${PKG_TMP}/"
         fi
 
         # Se Java, copia a lib gson

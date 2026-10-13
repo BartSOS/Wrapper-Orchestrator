@@ -2,7 +2,7 @@
 # ==============================================================================
 # TopCom Battle Orchestrator - Construtor de Bots
 # ==============================================================================
-# Compila e injeta o wrapper oficial em códigos C++, Python e Java.
+# Compila e injeta o wrapper oficial em códigos C, C++, Python e Java.
 # Uso: ./wrappers/build_bot.sh <arquivo_fonte> <arquivo_saida>
 # ==============================================================================
 set -euo pipefail
@@ -27,8 +27,17 @@ case "$EXT" in
         TMP_SRC="${EXE_FILE}_combined.cpp"
         
         cat "${HEADER}" "${SOURCE_FILE}" "${FOOTER}" > "${TMP_SRC}"
-        g++ -O2 -std=c++17 -I"${DIR_ROOT}/engine" "${TMP_SRC}" -o "${EXE_FILE}" -lm
+        g++ -O2 -std=c++20 -I"${DIR_ROOT}/engine" "${TMP_SRC}" -o "${EXE_FILE}" -lm
         rm -f "${TMP_SRC}"
+        ;;
+
+    c)
+        # Código do competidor em C99 com arena.h injetado; wrapper de I/O em C++20
+        OBJ_BOT="${EXE_FILE}_bot.o"
+        gcc -O2 -std=c99 -include "${DIR_WRAPPERS}/arena.h" -c "${SOURCE_FILE}" -o "${OBJ_BOT}"
+        g++ -O2 -std=c++20 -I"${DIR_WRAPPERS}" -I"${DIR_ROOT}/engine" \
+            "${DIR_WRAPPERS}/c_wrapper.cpp" "${OBJ_BOT}" -o "${EXE_FILE}" -lm
+        rm -f "${OBJ_BOT}"
         ;;
 
     py)

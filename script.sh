@@ -130,7 +130,7 @@ compilar_engine() {
     echo -e "  ${TAG_INFO} Fonte: ${ENGINE_SRC}"
     echo -e "  ${TAG_INFO} Binario de destino: ${ENGINE_BIN}"
 
-    if g++ -O3 -std=c++17 -I"${DIR_ROOT}" -I"${DIR_ROOT}/engine" "${ENGINE_SRC}" -o "${ENGINE_BIN}"; then
+    if g++ -O3 -std=c++20 -I"${DIR_ROOT}" -I"${DIR_ROOT}/engine" "${ENGINE_SRC}" -o "${ENGINE_BIN}"; then
         echo -e "${TAG_OK} Engine compilada com sucesso em: ${ENGINE_BIN}"
     else
         echo -e "${TAG_ERRO} Falha ao compilar a Engine Central!"
@@ -175,13 +175,13 @@ preparar_bots() {
     local -a CAND_EXTS=()
 
     if [[ -d "${DIR_INPUT}" ]]; then
-        readarray -t arquivos < <(find "${DIR_INPUT}" -type f \( -name "*.py" -o -name "*.cpp" -o -name "*.java" \) | sort)
+        readarray -t arquivos < <(find "${DIR_INPUT}" -type f \( -name "*.py" -o -name "*.cpp" -o -name "*.java" -o -name "*.c" \) | sort)
         for arq in "${arquivos[@]}"; do
             [[ -f "$arq" ]] || continue
             local bname=$(basename "$arq")
             [[ "$bname" == "submission_meta.json" ]] && continue
             local ext="${bname##*.}"
-            if [[ "$ext" == "py" || "$ext" == "cpp" || "$ext" == "java" ]]; then
+            if [[ "$ext" == "py" || "$ext" == "cpp" || "$ext" == "java" || "$ext" == "c" ]]; then
                 local nome_sem_ext="${bname%.*}"
                 local tam_bytes=$(wc -c < "$arq" 2>/dev/null || echo 0)
                 local tam_fmt="${tam_bytes} B"
@@ -192,8 +192,9 @@ preparar_bots() {
                 local lang_nome="Desconhecida"
                 case "$ext" in
                     py) lang_nome="Python 3" ;;
-                    cpp) lang_nome="C++17" ;;
+                    cpp) lang_nome="C++20" ;;
                     java) lang_nome="Java" ;;
+                    c) lang_nome="C" ;;
                 esac
 
                 CAND_EQUIPES+=("$nome_sem_ext")
@@ -257,12 +258,16 @@ preparar_bots() {
                 cmd_exec="python3 \"${bin_out}\""
                 ;;
             cpp) 
-                lang_name="C++17"
+                lang_name="C++20"
                 cmd_exec="\"${bin_out}\""
                 ;;
             java) 
                 lang_name="Java"
                 cmd_exec="java -jar \"${bin_out}\""
+                ;;
+            c)
+                lang_name="C"
+                cmd_exec="\"${bin_out}\""
                 ;;
             *) 
                 MOTIVOS_EXCLUSAO+=("${team}: Extensao nao suportada (${ext})")
@@ -271,8 +276,9 @@ preparar_bots() {
         esac
 
         local build_script="${DIR_ROOT}/wrappers/build_bot.sh"
-        if [[ ! -x "$build_script" ]]; then
-            MOTIVOS_EXCLUSAO+=("${team}: Script wrappers/build_bot.sh ausente ou sem permissao de execucao")
+        # Chamado via bash: a permissão +x se perde quando o BOCA extrai o engine.zip
+        if [[ ! -f "$build_script" ]]; then
+            MOTIVOS_EXCLUSAO+=("${team}: Script wrappers/build_bot.sh ausente")
             echo -e "    ${TAG_ERRO} Script wrappers/build_bot.sh nao encontrado."
             continue
         fi
@@ -283,7 +289,7 @@ preparar_bots() {
         # Executa compilacao utilizando o build_bot.sh da raiz
         local err_comp=""
         local exit_comp=0
-        if ! err_comp=$("${build_script}" "$arq" "$bin_out" 2>&1); then
+        if ! err_comp=$(bash "${build_script}" "$arq" "$bin_out" 2>&1); then
             exit_comp=1
         fi
 

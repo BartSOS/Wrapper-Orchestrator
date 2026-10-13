@@ -1,10 +1,11 @@
 #!/bin/bash
-# Validador Estrutural BOCA (C)
+# Validador Estrutural BOCA (C99)
+# O bot implementa Acao pensar(const Estado *e); arena.h é injetado na compilação.
 SOURCE_FILE="$1"
 EXE_FILE="$2"
 
 if ! grep -q "pensar(" "$SOURCE_FILE"; then
-    echo "ERRO DE VALIDACAO: A funcao pensar() não foi encontrada no seu bot."
+    echo "ERRO DE VALIDACAO: A funcao Acao pensar(const Estado *e) nao foi encontrada no seu bot."
     exit 1
 fi
 
@@ -14,22 +15,15 @@ if grep -q "system(" "$SOURCE_FILE"; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HEADER_FILE=""
-INC_DIR=""
-
-if [ -f "$SCRIPT_DIR/cpp_header.hpp" ]; then
-    HEADER_FILE="$SCRIPT_DIR/cpp_header.hpp"
-    INC_DIR="$SCRIPT_DIR"
-elif [ -f "$SCRIPT_DIR/../../../wrappers/cpp_header.hpp" ]; then
-    HEADER_FILE="$SCRIPT_DIR/../../../wrappers/cpp_header.hpp"
-    INC_DIR="$SCRIPT_DIR/../../../engine"
-fi
-
-if [ -n "$HEADER_FILE" ]; then
-    gcc -O2 -fsyntax-only -include "$HEADER_FILE" -I"$INC_DIR" "$SOURCE_FILE" 2>/dev/null || \
-    g++ -O2 -std=c++17 -fsyntax-only -include "$HEADER_FILE" -I"$INC_DIR" "$SOURCE_FILE" || exit 1
+ARENA_H=""
+if [ -f "$SCRIPT_DIR/arena.h" ]; then
+    ARENA_H="$SCRIPT_DIR/arena.h"
+elif [ -f "$SCRIPT_DIR/../../../wrappers/arena.h" ]; then
+    ARENA_H="$SCRIPT_DIR/../../../wrappers/arena.h"
 else
-    gcc -O2 -fsyntax-only "$SOURCE_FILE" || exit 1
+    echo "ERRO INTERNO: arena.h nao encontrado no pacote da linguagem C."
+    exit 1
 fi
-exit 0
 
+gcc -O2 -std=c99 -fsyntax-only -include "$ARENA_H" "$SOURCE_FILE" || exit 1
+exit 0

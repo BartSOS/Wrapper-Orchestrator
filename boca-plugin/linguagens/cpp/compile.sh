@@ -26,9 +26,9 @@ elif [ -f "$SCRIPT_DIR/../../../wrappers/cpp_header.hpp" ]; then
 fi
 
 if [ -n "$HEADER_FILE" ]; then
-    g++ -O2 -std=c++17 -fsyntax-only -include "$HEADER_FILE" -I"$INC_DIR" "$SOURCE_FILE" || exit 1
+    g++ -O2 -std=c++20 -fsyntax-only -include "$HEADER_FILE" -I"$INC_DIR" "$SOURCE_FILE" || exit 1
 else
-    g++ -O2 -std=c++17 -fsyntax-only "$SOURCE_FILE" || exit 1
+    g++ -O2 -std=c++20 -fsyntax-only "$SOURCE_FILE" || exit 1
 fi
 exit 0
 

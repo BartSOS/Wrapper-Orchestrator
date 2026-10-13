@@ -22,6 +22,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef __cplusplus
+extern "C" {   /* permite que o wrapper interno (C++) chame pensar() */
+#endif
+
 #define MAX_INIMIGOS 32   /* adversários vivos (a arena comporta até 20 bots) */
 #define MAX_HAZARDS  64   /* perigos ativos; excedentes são descartados       */
 #define MAX_ITENS    64   /* itens no mapa;  excedentes são descartados       */
@@ -121,5 +125,9 @@ static inline double diferenca_angulo(double de, double para) {
     double d = fmod(para - de + 540.0, 360.0) - 180.0;
     return d == -180.0 ? 180.0 : d;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* TOPCOM_ARENA_H */

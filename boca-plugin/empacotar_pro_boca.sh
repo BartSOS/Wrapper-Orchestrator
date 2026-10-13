@@ -29,8 +29,8 @@ for lang_dir in */; do
         printf '#!/bin/bash\nexit 0\n' > "${PKG_TMP}/run"
         chmod +x "${PKG_TMP}/run.sh" "${PKG_TMP}/run"
         
-        # Se C++, copia o header e json.hpp
-        if [ "$lang" = "cpp" ]; then
+        # Se C++ ou C, copia o header e json.hpp
+        if [ "$lang" = "cpp" ] || [ "$lang" = "c" ]; then
             cp "${ROOT_DIR}/wrappers/cpp_header.hpp" "${PKG_TMP}/"
             mkdir -p "${PKG_TMP}/nlohmann"
             cp "${ROOT_DIR}/engine/nlohmann/json.hpp" "${PKG_TMP}/nlohmann/"
@@ -43,6 +43,13 @@ for lang_dir in */; do
 
         # Gera o TGZ com todos os arquivos
         tar -czf "${SCRIPT_DIR}/out_boca_packages/${lang}_boca.tgz" -C "${PKG_TMP}" .
+        cp "${SCRIPT_DIR}/out_boca_packages/${lang}_boca.tgz" "${SCRIPT_DIR}/out_boca_packages/${lang}.tgz"
+        
+        # Aliases para compatibilidade com extensoes comuns
+        if [ "$lang" = "python3" ]; then
+            cp "${SCRIPT_DIR}/out_boca_packages/${lang}_boca.tgz" "${SCRIPT_DIR}/out_boca_packages/py.tgz"
+            cp "${SCRIPT_DIR}/out_boca_packages/${lang}_boca.tgz" "${SCRIPT_DIR}/out_boca_packages/py3.tgz"
+        fi
         
         # Limpa o temp
         rm -rf "${PKG_TMP}"

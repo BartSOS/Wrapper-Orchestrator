@@ -6,6 +6,10 @@
  * Dependência: <nlohmann/json.hpp>
  * Compilação: g++ -O3 -std=c++20 engine.cpp -o engine
  * Execução:   ./engine "python3 bot1.py" "./bot_cpp" "java -cp . Bot"
+ * Ambiente:   TOPCOM_SEED (inteiro de 0 a 4294967295; sem ela, a seed é sorteada)
+ *             TOPCOM_MAX_BOTS (limite de bots; padrão 20)
+ * Saída:      match_frames.json e replays/partida_<id>.json no diretório atual,
+ *             com seed, ranking (bots[]) e todos os frames.
  * ============================================================================
  */
 
@@ -24,6 +28,9 @@
 #include <random>
 #include <map>
 #include <cstdlib>
+#include <cstdint>
+#include <cstring>
+#include <cerrno>
 
 // Dependências POSIX para IPC e Subprocessos
 #include <unistd.h>
@@ -46,6 +53,14 @@ namespace Config {
     constexpr int    MAX_TICKS = 1500;
     constexpr double TICK_DT = 0.1;           // 10 Hz (0.1s por tick)
     constexpr int    MAX_BOTS_PADRAO = 20;    // limite do evento; TOPCOM_MAX_BOTS sobrepõe (benchmark)
+
+    // Nascimento em círculo: raio 360 até 20 bots (equilíbrio do evento). Acima disso o raio
+    // cresce para manter SPAWN_MIN_GAP entre centros vizinhos; se nem o raio máximo bastar,
+    // os tanques são distribuídos em anéis concêntricos.
+    constexpr double SPAWN_RADIUS = 360.0;
+    constexpr double SPAWN_RADIUS_MAX = 480.0; // 500 - TANK_RADIUS: o tanque nasce dentro da arena
+    constexpr double SPAWN_MIN_GAP = 50.0;     // diâmetro do tanque (40) + folga
+    constexpr double SPAWN_RING_GAP = 60.0;    // distância entre anéis concêntricos
 
     constexpr double TANK_RADIUS = 20.0;
     constexpr double TANK_MAX_SPEED = 50.0;   // unidades/s
@@ -273,6 +288,7 @@ struct Tank {
     int kills = 0;
     bool is_alive = true;
     int consecutive_timeouts = 0;
+    int tick_eliminacao = -1; // tick em que foi eliminado (-1 = vivo)
 };
 
 struct Projectile {
@@ -337,30 +353,83 @@ private:
     int tick_count = 0;
     int next_entity_id = 1000;
     std::mt19937 rng;
+    uint32_t seed = 0;
+
+    struct Nascimento {
+        Vec2 pos;
+        double angle; // graus, olhando para o centro da arena
+    };
+
+    // Posições de nascimento dos n tanques. Até 20 bots: círculo de raio 360 (comportamento
+    // original). Acima disso o raio cresce para não haver sobreposição; se passar do raio
+    // máximo, os tanques são distribuídos em anéis concêntricos, de fora para dentro.
+    static std::vector<Nascimento> posicoesDeNascimento(size_t n) {
+        const double cx = Config::ARENA_WIDTH / 2.0;
+        const double cy = Config::ARENA_HEIGHT / 2.0;
+
+        // Raio mínimo para k tanques num anel com SPAWN_MIN_GAP entre centros vizinhos
+        auto raio_minimo = [](size_t k) {
+            return k < 2 ? 0.0 : Config::SPAWN_MIN_GAP / (2.0 * std::sin(M_PI / k));
+        };
+        // Quantos tanques cabem num anel de raio r
+        auto capacidade = [](double r) -> size_t {
+            double s = Config::SPAWN_MIN_GAP / (2.0 * r);
+            return s >= 1.0 ? 1 : static_cast<size_t>(std::floor(M_PI / std::asin(s)));
+        };
+
+        std::vector<std::pair<double, size_t>> aneis; // (raio, quantidade de tanques)
+        double r_unico = std::max(Config::SPAWN_RADIUS, raio_minimo(n));
+        if (r_unico <= Config::SPAWN_RADIUS_MAX) {
+            aneis.push_back({r_unico, n});
+        } else {
+            size_t restantes = n;
+            double r = Config::SPAWN_RADIUS_MAX;
+            while (restantes > 0) {
+                // O último anel possível recebe todos os restantes (só com centenas de bots)
+                size_t k = (r < Config::SPAWN_RING_GAP) ? restantes : std::min(capacidade(r), restantes);
+                aneis.push_back({r, k});
+                restantes -= k;
+                r = std::max(0.0, r - Config::SPAWN_RING_GAP);
+            }
+        }
+
+        std::vector<Nascimento> pos;
+        for (size_t a = 0; a < aneis.size(); ++a) {
+            const auto [raio, k] = aneis[a];
+            double defasagem = (a % 2 == 1) ? M_PI / k : 0.0; // anéis internos intercalados
+            for (size_t i = 0; i < k; ++i) {
+                double angle_rad = (2.0 * M_PI * i) / k + defasagem;
+                pos.push_back({{cx + raio * std::cos(angle_rad), cy + raio * std::sin(angle_rad)},
+                               std::fmod((angle_rad * 180.0 / M_PI) + 180.0, 360.0)});
+            }
+        }
+        return pos;
+    }
 
 public:
-    ArenaEngine(const std::vector<std::string>& bot_commands) {
-        rng.seed(std::chrono::system_clock::now().time_since_epoch().count());
-        
-        // Inicia e posiciona os tanques distribuídos em círculo na arena (main já aplicou o limite)
-        size_t total_bots = bot_commands.size();
-        double center_x = Config::ARENA_WIDTH / 2.0;
-        double center_y = Config::ARENA_HEIGHT / 2.0;
-        double spawn_radius = 360.0;
+    ArenaEngine(const std::vector<std::string>& bot_commands, uint32_t seed_partida) : seed(seed_partida) {
+        rng.seed(seed);
 
-        for (size_t i = 0; i < total_bots; ++i) {
+        // Inicia e posiciona os tanques na arena (main já aplicou o limite)
+        auto nascimentos = posicoesDeNascimento(bot_commands.size());
+
+        for (size_t i = 0; i < bot_commands.size(); ++i) {
+            Tank t;
+            t.id = i + 1;
+            t.pos = nascimentos[i].pos;
+            t.angle = nascimentos[i].angle;
+            t.turret_angle = t.angle;
+
             auto bot = std::make_unique<BotProcess>(i + 1, bot_commands[i]);
             if (bot->start()) {
                 bots.push_back(std::move(bot));
-                Tank t;
-                t.id = i + 1;
-                double angle_rad = (2.0 * M_PI * i) / total_bots;
-                t.pos = { center_x + spawn_radius * std::cos(angle_rad),
-                          center_y + spawn_radius * std::sin(angle_rad) };
-                t.angle = std::fmod((angle_rad * 180.0 / M_PI) + 180.0, 360.0); // Olhando para o centro da arena
-                t.turret_angle = t.angle;
-                tanks.push_back(t);
+            } else {
+                // Sem processo não há como jogar: o tanque entra eliminado e aparece no ranking
+                t.is_alive = false;
+                t.hp = 0.0;
+                registrarMomento("KILL_DESCONEXAO", "Bot ID [" + std::to_string(t.id) + "] nao pode ser iniciado e foi desativado!", t.id, -1, "[DESCONEXAO]");
             }
+            tanks.push_back(t);
         }
 
         match_replay["config"] = {
@@ -797,14 +866,43 @@ public:
         return std::count_if(tanks.begin(), tanks.end(), [](const Tank& t) { return t.is_alive; });
     }
 
+    // Registra o tick de eliminação dos tanques que morreram neste tick
+    void marcarEliminados() {
+        for (auto& t : tanks) {
+            if (!t.is_alive && t.tick_eliminacao < 0) t.tick_eliminacao = tick_count;
+        }
+    }
+
+    // Classificação da partida (regulamento 8.4.1): 1º vivo > 2º abates > 3º vida restante.
+    // Desempates (o regulamento não define): eliminado mais tarde > menor id (ordem do slot).
+    // A vida de tanques destruídos conta como 0 (o HP interno pode ficar negativo).
+    std::vector<const Tank*> classificacao() const {
+        std::vector<const Tank*> ordem;
+        for (const auto& t : tanks) ordem.push_back(&t);
+        std::sort(ordem.begin(), ordem.end(), [](const Tank* a, const Tank* b) {
+            if (a->is_alive != b->is_alive) return a->is_alive > b->is_alive;
+            if (a->kills != b->kills) return a->kills > b->kills;
+            double hp_a = std::max(0.0, a->hp), hp_b = std::max(0.0, b->hp);
+            if (hp_a != hp_b) return hp_a > hp_b;
+            if (a->tick_eliminacao != b->tick_eliminacao) {
+                if (a->tick_eliminacao < 0) return true;   // vivo
+                if (b->tick_eliminacao < 0) return false;
+                return a->tick_eliminacao > b->tick_eliminacao;
+            }
+            return a->id < b->id;
+        });
+        return ordem;
+    }
+
     void run() {
         std::cout << "[ENGINE] Início de simulação! Bots conectados: " << bots.size() << "\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        
+
         while (tick_count < Config::MAX_TICKS && countAliveTanks() > 1) {
             spawnRandomHazardsAndItems();
             processBotCommands();
             updatePhysicsAndCollisions();
+            marcarEliminados();
             recordFrame();
 
             tick_count++;
@@ -816,21 +914,33 @@ public:
     }
 
     void exportReplayAndSummary() {
+        marcarEliminados();
+
         // 1. Cálculo do Vencedor e Placar Final
         std::cout << "\n==================================================\n";
         std::cout << "               PLACAR FINAL DA ARENA              \n";
         std::cout << "==================================================\n";
-        std::cout << "Duração da Batalha: " << tick_count << " ticks (" << (tick_count * Config::TICK_DT) << "s)\n\n";
+        std::cout << "Duração da Batalha: " << tick_count << " ticks (" << (tick_count * Config::TICK_DT) << "s)\n";
+        std::cout << "Seed da partida: " << seed << "\n\n";
 
-        // Ordenação por: 1º Vivo > 2º Kills > 3º HP Restante
-        std::vector<Tank*> sorted_tanks;
-        for (auto& t : tanks) sorted_tanks.push_back(&t);
+        auto sorted_tanks = classificacao();
 
-        std::sort(sorted_tanks.begin(), sorted_tanks.end(), [](const Tank* a, const Tank* b) {
-            if (a->is_alive != b->is_alive) return a->is_alive > b->is_alive;
-            if (a->kills != b->kills) return a->kills > b->kills;
-            return a->hp > b->hp;
-        });
+        // Ranking em ordem de id (bots[id-1]); a posição vem do critério de classificação.
+        // O script.sh troca "Bot_<id>" pelo nome da equipe e acrescenta a linguagem.
+        json ranking = json::array();
+        for (const auto& t : tanks) {
+            size_t posicao = std::find(sorted_tanks.begin(), sorted_tanks.end(), &t) - sorted_tanks.begin() + 1;
+            ranking.push_back({
+                {"id", t.id},
+                {"nome", "Bot_" + std::to_string(t.id)},
+                {"posicao", posicao},
+                {"vivo", t.is_alive},
+                {"kills", t.kills},
+                {"hp", std::max(0.0, t.hp)},
+                {"vencedor", posicao == 1},
+                {"tick_eliminacao", t.tick_eliminacao < 0 ? json(nullptr) : json(t.tick_eliminacao)}
+            });
+        }
 
         for (size_t i = 0; i < sorted_tanks.size(); ++i) {
             const auto* t = sorted_tanks[i];
@@ -857,9 +967,11 @@ public:
             json j_resumo;
             j_resumo["partida_id"] = std::to_string(now);
             j_resumo["status"] = "concluido";
+            j_resumo["seed"] = seed;
             j_resumo["vencedor"] = vencedor_nome;
             j_resumo["turnos"] = tick_count;
             j_resumo["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
+            j_resumo["bots"] = ranking;
 
             resumo << j_resumo.dump(2);
             resumo.close();
@@ -869,9 +981,11 @@ public:
         // 3. Exportação do Arquivo JSON de Replay Completo COM TODOS OS FRAMES
         match_replay["partida_id"] = std::to_string(now);
         match_replay["status"] = "concluido";
+        match_replay["seed"] = seed;
         match_replay["vencedor"] = vencedor_nome;
         match_replay["turnos"] = tick_count;
         match_replay["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
+        match_replay["bots"] = ranking;
 
         std::ofstream file("match_frames.json");
         if (file.is_open()) {
@@ -924,12 +1038,40 @@ int main(int argc, char* argv[]) {
         if (v > 0) max_bots = v;
     }
 
+    // Seed da partida: TOPCOM_SEED (0 a 4294967295) reproduz hazards e itens; sem ela, sorteia.
+    // Valor inválido também cai no sorteio, com aviso. A seed usada vai para o JSON.
+    uint32_t seed = 0;
+    bool seed_informada = false;
+    if (const char* env = std::getenv("TOPCOM_SEED")) {
+        char* fim = nullptr;
+        errno = 0;
+        unsigned long long v = std::strtoull(env, &fim, 10);
+        bool so_digitos = *env != '\0' && std::all_of(env, env + std::strlen(env), [](char c) { return c >= '0' && c <= '9'; });
+        if (so_digitos && errno == 0 && fim && *fim == '\0' && v <= UINT32_MAX) {
+            seed = static_cast<uint32_t>(v);
+            seed_informada = true;
+        } else {
+            std::cerr << "[ENGINE AVISO] TOPCOM_SEED invalida ('" << env << "'): use um inteiro de 0 a 4294967295. Sorteando outra.\n";
+        }
+    }
+    if (!seed_informada) {
+        uint64_t mistura = static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+        try {
+            std::random_device rd;
+            mistura ^= (static_cast<uint64_t>(rd()) << 32) | rd();
+        } catch (...) {
+            // sem random_device: fica só o relógio
+        }
+        seed = static_cast<uint32_t>(mistura ^ (mistura >> 32));
+    }
+    std::cout << "[ENGINE] Seed da partida: " << seed << (seed_informada ? " (TOPCOM_SEED)" : " (sorteada)") << "\n";
+
     std::vector<std::string> bot_commands;
     for (int i = 1; i < argc && i <= max_bots; ++i) {
         bot_commands.push_back(argv[i]);
     }
 
-    ArenaEngine arena(bot_commands);
+    ArenaEngine arena(bot_commands, seed);
     arena.run();
 
     return 0;

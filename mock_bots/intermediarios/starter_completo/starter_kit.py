@@ -17,10 +17,16 @@ def pensar(estado):
     
     Parâmetros:
       estado (dict):
-        - "self": {"x": float, "y": float, "angle": float, "hp": float, "energy": float, "cooldown": float}
-        - "enemies": [{"x": float, "y": float, "hp": float}, ...]
-        - "items": [{"x": float, "y": float, "type": "HEAL"|"ENERGY"}, ...]
-        
+        - "tick": int (número do tick atual)
+        - "self": {"id": int, "x": float, "y": float, "vx": float, "vy": float,
+                   "angle": float, "turret_angle": float, "hp": float, "energy": float,
+                   "cooldown": float, "shield": bool}
+        - "enemies": [{"id": int, "x": float, "y": float, "vx": float, "vy": float}, ...]
+                     (só adversários vivos; a vida deles não é informada)
+        - "hazards": [{"id": int, "type": "ARTILLERY"|"LASER", "x": float, "y": float,
+                       "radius": float, "timer": float, "angle": float, "duration": float}, ...]
+        - "items": [{"id": int, "type": "HEAL"|"ENERGY", "x": float, "y": float}, ...]
+
     Retorno:
       dict com os comandos da rodada:
         - "throttle": float (-1.0 a 1.0)

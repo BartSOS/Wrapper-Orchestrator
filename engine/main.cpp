@@ -53,6 +53,8 @@ namespace Config {
     constexpr int    MAX_TICKS = 1500;
     constexpr double TICK_DT = 0.1;           // 10 Hz (0.1s por tick)
     constexpr int    MAX_BOTS_PADRAO = 20;    // limite do evento; TOPCOM_MAX_BOTS sobrepõe (benchmark)
+    constexpr int    RESPOSTA_MS = 50;        // prazo de resposta por tick (20 ticks sem resposta = eliminado)
+    constexpr int    PARTIDA_INICIO_MS = 5000;// prazo do tick 0 para todos os bots terminarem de iniciar
 
     // Nascimento em círculo: raio 360 até 20 bots (equilíbrio do evento). Acima disso o raio
     // cresce para manter SPAWN_MIN_GAP entre centros vizinhos; se nem o raio máximo bastar,
@@ -135,13 +137,85 @@ using namespace Math2D;
 // ============================================================================
 // 3. COMUNICAÇÃO IPC E SUBPROCESSOS POSIX
 // ============================================================================
+// Protocolo (uma linha JSON por mensagem):
+// - cada bot tem no máximo UM estado pendente. Se ainda deve a resposta ao estado anterior,
+//   a engine espera por ela (e a descarta, por estar atrasada) antes de mandar o estado novo.
+//   Assim uma resposta atrasada nunca é aplicada a outro tick e o pipe de entrada do bot
+//   não enche (um bot travado não bloqueia a engine);
+// - linhas que não são objeto JSON são ignoradas;
+// - o stderr do bot (print/printf do aluno, desviados pelos wrappers) vai para /dev/null e
+//   não se mistura às respostas.
 class BotProcess {
 private:
     pid_t pid = -1;
     int pipe_in[2] = {-1, -1};  // Engine -> Bot (stdin)
     int pipe_out[2] = {-1, -1}; // Bot -> Engine (stdout)
     bool alive = false;
+    bool pendente = false;      // estado enviado ainda sem resposta
     std::string read_buffer;
+
+    using Relogio = std::chrono::steady_clock;
+
+    // Escreve a mensagem inteira (o pipe tem no máximo um estado pendente, então não enche)
+    bool escrever(const std::string& msg) {
+        size_t enviado = 0;
+        while (enviado < msg.size()) {
+            ssize_t n = write(pipe_in[1], msg.data() + enviado, msg.size() - enviado);
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+            enviado += static_cast<size_t>(n);
+        }
+        return true;
+    }
+
+    // Próximo objeto JSON vindo do bot até o prazo; descarta linhas que não são objeto JSON
+    bool lerObjeto(json& out, Relogio::time_point prazo) {
+        while (true) {
+            size_t pos;
+            while ((pos = read_buffer.find('\n')) != std::string::npos) {
+                std::string linha = read_buffer.substr(0, pos);
+                read_buffer.erase(0, pos + 1);
+                json j = json::parse(linha, nullptr, false);
+                if (!j.is_discarded() && j.is_object()) {
+                    out = std::move(j);
+                    return true;
+                }
+            }
+
+            auto agora = Relogio::now();
+            if (agora >= prazo) return false;
+            long restante_us = std::chrono::duration_cast<std::chrono::microseconds>(prazo - agora).count();
+
+            fd_set read_fds;
+            FD_ZERO(&read_fds);
+            FD_SET(pipe_out[0], &read_fds);
+            struct timeval tv;
+            tv.tv_sec = restante_us / 1000000;
+            tv.tv_usec = restante_us % 1000000;
+
+            int ready = select(pipe_out[0] + 1, &read_fds, nullptr, nullptr, &tv);
+            if (ready < 0) {
+                if (errno == EINTR) continue;
+                return false;
+            }
+            if (ready == 0) return false; // prazo esgotado
+
+            bool fim = false;
+            char buffer[4096];
+            while (true) {
+                ssize_t bytes = read(pipe_out[0], buffer, sizeof(buffer));
+                if (bytes > 0) {
+                    read_buffer.append(buffer, static_cast<size_t>(bytes));
+                } else {
+                    if (bytes == 0) fim = true; // bot fechou a saída
+                    break;
+                }
+            }
+            if (fim && read_buffer.find('\n') == std::string::npos) return false;
+        }
+    }
 
 public:
     int id;
@@ -154,7 +228,8 @@ public:
     }
 
     bool start() {
-        if (pipe(pipe_in) < 0 || pipe(pipe_out) < 0) {
+        // O_CLOEXEC: os bots iniciados depois não herdam os pipes dos anteriores
+        if (pipe2(pipe_in, O_CLOEXEC) < 0 || pipe2(pipe_out, O_CLOEXEC) < 0) {
             std::cerr << "[IPC ERRO] Falha ao criar pipes POSIX para o Bot " << id << "\n";
             return false;
         }
@@ -167,20 +242,29 @@ public:
 
         if (pid == 0) {
             // --- PROCESSO FILHO ---
+            // Grupo de processos próprio: terminate() derruba o bot inteiro (sh, timeout, bot)
+            setpgid(0, 0);
+
             // Fechar pontas não utilizadas dos pipes
             close(pipe_in[1]);
             close(pipe_out[0]);
 
-            // Redirecionar stdin e stdout
+            // Redirecionar stdin e stdout. O stderr vai para /dev/null: misturado ao stdout,
+            // cada print do aluno virava uma "resposta" e atrasava o bot em um tick.
             dup2(pipe_in[0], STDIN_FILENO);
             dup2(pipe_out[1], STDOUT_FILENO);
-            dup2(pipe_out[1], STDERR_FILENO); // Redireciona stderr para análise unificada
+            int devnull = open("/dev/null", O_WRONLY);
+            if (devnull >= 0) {
+                dup2(devnull, STDERR_FILENO);
+                close(devnull);
+            }
 
             close(pipe_in[0]);
             close(pipe_out[1]);
 
             // Executar via shell para suportar argumentos complexos (ex: "python3 bot.py")
-            execl("/bin/sh", "sh", "-c", command.c_str(), nullptr);
+            std::string cmd = "exec " + command;
+            execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
             _exit(127); // Se execl falhar
         }
 
@@ -207,62 +291,43 @@ public:
         return true;
     }
 
-    void sendPayload(const std::string& data) {
-        if (!alive) return;
-        if (!checkProcessAlive()) return;
-        std::string msg = data + "\n";
-        ssize_t bytes = write(pipe_in[1], msg.c_str(), msg.size());
-        if (bytes < 0) {
-            alive = false;
-        }
-    }
-
-    // Leitura não-bloqueante utilizando POSIX select para evitar travamentos
-    bool readResponse(std::string& out_line, int timeout_ms = 50) {
+    // Envia o estado e espera, até timeout_ms, a resposta a ESTE estado. Se o bot ainda
+    // devia a resposta ao estado anterior, ela é esperada no mesmo prazo e descartada;
+    // sem ela, o estado novo nem é enviado (conta como tick sem resposta).
+    bool trocar(const std::string& estado, json& resposta, int timeout_ms) {
         if (!alive) return false;
         if (!checkProcessAlive()) return false;
 
-        fd_set read_fds;
-        FD_ZERO(&read_fds);
-        FD_SET(pipe_out[0], &read_fds);
-
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = timeout_ms * 1000;
-
-        int ready = select(pipe_out[0] + 1, &read_fds, nullptr, nullptr, &tv);
-        if (ready > 0 && FD_ISSET(pipe_out[0], &read_fds)) {
-            char buffer[1024];
-            while (true) {
-                ssize_t bytes = read(pipe_out[0], buffer, sizeof(buffer) - 1);
-                if (bytes > 0) {
-                    buffer[bytes] = '\0';
-                    read_buffer += buffer;
-                } else {
-                    break;
-                }
-            }
+        auto prazo = Relogio::now() + std::chrono::milliseconds(timeout_ms);
+        if (pendente) {
+            json atrasada;
+            if (!lerObjeto(atrasada, prazo)) return false;
+            pendente = false;
         }
 
-        // Procura por quebra de linha determinando o fim do comando JSON
-        size_t pos = read_buffer.find('\n');
-        if (pos != std::string::npos) {
-            out_line = read_buffer.substr(0, pos);
-            read_buffer.erase(0, pos + 1);
-            return true;
+        if (!escrever(estado + "\n")) {
+            alive = false;
+            return false;
         }
+        pendente = true;
 
-        return false;
+        if (!lerObjeto(resposta, prazo)) return false;
+        pendente = false;
+        return true;
     }
 
     void terminate() {
-        if (alive && pid > 0) {
-            kill(pid, SIGKILL);
-            waitpid(pid, nullptr, WNOHANG);
+        if (pid > 0) {
+            kill(-pid, SIGKILL); // grupo inteiro: sh/timeout, o bot e eventuais filhos dele
+            if (alive) {
+                kill(pid, SIGKILL);
+                waitpid(pid, nullptr, WNOHANG);
+            }
             alive = false;
+            pid = -1;
         }
-        if (pipe_in[1] >= 0) close(pipe_in[1]);
-        if (pipe_out[0] >= 0) close(pipe_out[0]);
+        if (pipe_in[1] >= 0) { close(pipe_in[1]); pipe_in[1] = -1; }
+        if (pipe_out[0] >= 0) { close(pipe_out[0]); pipe_out[0] = -1; }
     }
 
     bool isAlive() const { return alive; }
@@ -354,6 +419,7 @@ private:
     int next_entity_id = 1000;
     std::mt19937 rng;
     uint32_t seed = 0;
+    std::chrono::steady_clock::time_point inicio_partida = std::chrono::steady_clock::now();
 
     struct Nascimento {
         Vec2 pos;
@@ -547,15 +613,15 @@ public:
 
     void processBotCommands() {
         for (auto& bot : bots) {
-            if (!bot->isAlive()) continue;
-
             // Identifica a struct original do tanque
             auto it = std::find_if(tanks.begin(), tanks.end(),
                                    [&](const Tank& t) { return t.id == bot->id; });
             if (it == tanks.end() || !it->is_alive) continue;
             Tank& tank = *it;
 
-            // Se o processo do bot encerrou ou morreu no sistema operacional
+            // Se o processo do bot encerrou ou morreu no sistema operacional (regra 8.1.2).
+            // Antes este teste vinha depois de um "continue" para processos mortos, e o
+            // tanque de um bot encerrado ficava vivo e parado até o fim da partida.
             if (!bot->isAlive()) {
                 tank.is_alive = false;
                 tank.hp = 0.0;
@@ -563,17 +629,20 @@ public:
                 continue;
             }
 
-            // Envia Percepção JSON via pipe_in
-            json payload = buildPerceptionPayload(tank);
-            bot->sendPayload(payload.dump());
+            // Prazo de resposta: 50 ms por tick. No tick 0 vale o prazo de partida, para o
+            // processo do bot terminar de iniciar (a JVM leva centenas de ms).
+            int prazo_ms = Config::RESPOSTA_MS;
+            if (tick_count == 0) {
+                auto restante = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    inicio_partida + std::chrono::milliseconds(Config::PARTIDA_INICIO_MS) - std::chrono::steady_clock::now()).count();
+                prazo_ms = static_cast<int>(std::max<long long>(Config::RESPOSTA_MS, restante));
+            }
 
-            // Lê resposta via pipe_out (com timeout não-bloqueante de 50ms)
-            std::string response_str;
-            if (bot->readResponse(response_str, 50)) {
+            // Envia a percepção pelo stdin do bot e espera a resposta a ela pelo stdout
+            json res;
+            if (bot->trocar(buildPerceptionPayload(tank).dump(), res, prazo_ms)) {
                 tank.consecutive_timeouts = 0;
                 try {
-                    json res = json::parse(response_str);
-
                     // --- CLAMPING RIGOROSO ANTICHEATING ---
                     double throttle = std::clamp(res.value("throttle", 0.0), -1.0, 1.0);
                     double turn = std::clamp(res.value("turn", 0.0), -1.0, 1.0);
@@ -866,10 +935,16 @@ public:
         return std::count_if(tanks.begin(), tanks.end(), [](const Tank& t) { return t.is_alive; });
     }
 
-    // Registra o tick de eliminação dos tanques que morreram neste tick
+    // Registra o tick de eliminação dos tanques que morreram neste tick e encerra o processo
+    // do bot (um bot eliminado não recebe mais estados nem deve gastar CPU/memória)
     void marcarEliminados() {
         for (auto& t : tanks) {
-            if (!t.is_alive && t.tick_eliminacao < 0) t.tick_eliminacao = tick_count;
+            if (!t.is_alive && t.tick_eliminacao < 0) {
+                t.tick_eliminacao = tick_count;
+                for (auto& bot : bots) {
+                    if (bot->id == t.id) bot->terminate();
+                }
+            }
         }
     }
 
@@ -897,6 +972,7 @@ public:
     void run() {
         std::cout << "[ENGINE] Início de simulação! Bots conectados: " << bots.size() << "\n";
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        inicio_partida = std::chrono::steady_clock::now();
 
         while (tick_count < Config::MAX_TICKS && countAliveTanks() > 1) {
             spawnRandomHazardsAndItems();

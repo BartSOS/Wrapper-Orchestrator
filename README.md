@@ -17,7 +17,7 @@ códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (at�
 - **Excluídos antes da partida** (vão para `excluidos[]` com o motivo): arquivo vazio, nome repetido (o primeiro em ordem alfabética entra), erro de compilação ou de sintaxe e excedentes do limite.
 - O `build_bot.sh` é chamado via `bash`: a permissão `+x` se perde quando o BOCA extrai o `engine.zip`.
 - **Capacidade:** de 2 a **20 bots** por partida (limite do evento). O limite é aplicado **antes** de compilar: os candidatos são compilados em ordem alfabética só até preencher as vagas; se algum falhar, o lote seguinte tenta os próximos. Os excedentes não chegam a ser compilados.
-- **Dentro do BOCA:** o `EngineExecutionService.php` extrai o `engine.zip`, copia o código ativo de cada equipe como `submissoes/<username>.<ext>` e executa `./script.sh`.
+- **Dentro do BOCA:** o `EngineExecutionService.php` extrai o `engine.zip` numa pasta própria da partida (`private/runs/contest_N/<runId>/`), copia o código ativo de cada equipe como `submissoes/<username>.<ext>` e executa `bash ./script.sh <submissoes>`. Uma trava por contest impede duas partidas ao mesmo tempo ("Partida em andamento").
 
 ### Variáveis de ambiente
 
@@ -27,7 +27,7 @@ códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (at�
 | `TOPCOM_MAX_BOTS` | 20 | Limite de bots na partida (`script.sh` e engine). O `--benchmark` usa para medir acima de 20. |
 | `TOPCOM_COMPILE_JOBS` | automático | Compilações simultâneas. Automático: `min(nproc, memória disponível / 500 MB)`, mínimo 1 (em contêiner com limite de memória, vale o que sobra no cgroup). |
 
-O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`: para usar `TOPCOM_SEED` pelo BOCA, ela precisa ser acrescentada lá.
+O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já inclui `TOPCOM_SEED` (sorteada pelo BOCA para cada partida e gravada no resultado), `TOPCOM_MAX_BOTS` (20, item 7.8) e `TOPCOM_COMPILE_JOBS` (se definido no servidor). Para reproduzir uma partida do BOCA, use a `seed` do `match_frames.json` com `gerenciar_engine.py --testar --seed X`.
 
 ---
 
@@ -56,7 +56,7 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`: para usar 
 
 - `bots[]` vem em ordem de `id` (`bots[id-1]`); `id` é o slot da arena (ordem alfabética dos nomes) e é o mesmo `id` dos `tanks` dos frames.
 - `lang`: `"C"`, `"C++20"`, `"Java"` ou `"Python 3"`.
-- `posicao` (1..N) segue o regulamento 8.4.1: vivo no fim > mais abates > mais vida. Desempates (não previstos no regulamento): eliminado mais tarde > menor `id`. A vida de um tanque destruído conta como 0.
+- `posicao` (1..N) segue o regulamento 8.4.1: vivo no fim > mais abates > mais vida > eliminado mais tarde > menor `id`. O último critério do regulamento é a ordem de inscrição; na engine ele vira o `id` do slot, ou seja, a ordem alfabética do nome (username), que coincide com a inscrição quando as contas são numeradas em sequência. A vida de um tanque destruído conta como 0.
 - `vencedor` é `true` só para `posicao` 1; o `vencedor` do topo é o `nome` dele.
 - `tick_eliminacao`: tick em que o tanque foi destruído, desconectou ou estourou o timeout (`null` se terminou vivo). Campo extra, além do C1.
 - `excluidos[]`: bots que não entraram, na ordem em que foram descartados.
@@ -166,7 +166,7 @@ public class Solution {
 | Timeout | 50 ms por tick para responder; 20 ticks seguidos sem resposta → tanque desativado (`[TIMEOUT]`). No tick 0 o prazo é de até 5 s, para os processos terminarem de iniciar (a JVM leva centenas de ms) |
 | Processo encerrado | o bot que termina ou fecha o pipe é destruído (`[DESCONEXAO]`). **O bot precisa ficar vivo a partida inteira** |
 | Fim | resta 1 sobrevivente ou o limite de ticks |
-| Classificação | 1º vivo · 2º abates · 3º HP restante · desempate: eliminado mais tarde, depois menor id |
+| Classificação (8.4.1) | 1º vivo · 2º abates · 3º HP restante · 4º eliminado mais tarde · 5º menor id (ordem do slot) |
 
 **Protocolo com os bots** (uma linha JSON por mensagem): cada bot tem no máximo um estado pendente. A resposta de um tick só vale para aquele tick: se chegar atrasada, é descartada, e o estado seguinte só é enviado depois dela (um bot travado não enche o pipe nem trava a engine). Linhas que não são objeto JSON são ignoradas, e o `stderr` dos bots vai para `/dev/null`. Cada bot roda num grupo de processos próprio, encerrado inteiro quando o tanque é eliminado e no fim da partida.
 

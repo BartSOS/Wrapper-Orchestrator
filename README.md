@@ -2,7 +2,7 @@
 
 O **Battle Orchestrator** é o motor da Arena: recebe os códigos das equipes, injeta os wrappers de I/O, compila, isola e executa os bots, roda a **Engine de física em C++20** e gera o replay `match_frames.json`. O BOCA transforma esse replay em experiência visual no pacote Unity.
 
-O módulo é **autônomo**: roda igual na linha de comando (fora do BOCA) e dentro do contêiner `topcom-boca-web-1`, quando um juiz ou admin clica em **Executar Engine**.
+O módulo é **autônomo**: roda igual na linha de comando (fora do BOCA) e dentro do contêiner `gamejam-boca-web-1`, quando um juiz ou admin clica em **Executar Engine**.
 
 ```text
 códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (até 1500 ticks) ──▶ match_frames.json ──▶ Unity (GameJam.exe)
@@ -223,7 +223,7 @@ Resultado: log no terminal e `match_frames.json` na raiz.
 python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --testar             # partida com os bots-base
 python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --benchmark 4,8,20   # capacidade/tempo
 ```
-Roda o `script.sh` dos fontes atuais dentro do contêiner `topcom-boca-web-1`.
+Roda o `script.sh` dos fontes atuais dentro do contêiner `gamejam-boca-web-1`.
 
 **Medições no contêiner web (`--benchmark 20,40,60`, 14/10/2026, VM de 12 núcleos e 3,7 GB, rotação dos 6 bots-base, 4 jobs de compilação escolhidos pela memória):**
 
@@ -263,6 +263,6 @@ Os `.tgz` de `out_boca_packages/` são instalados em `private/languages/` (pela 
 
 A build está em `../unity_engine_v1/` (`GameJam.exe`, `GameJam_Data/`, ...). O replay é lido de `GameJam_Data/StreamingAssets/match_frames.json`.
 
-- Compacte a build em `.zip` **dentro de uma pasta raiz `TopCom_Arena/`** (`TopCom_Arena/GameJam.exe`, `TopCom_Arena/GameJam_Data/...`) e envie-a pela aba **Desafio → Visualizador de Partida**. O BOCA valida que o zip contém `GameJam.exe`.
-- A cada download, o BOCA copia o pacote, grava o replay da partida em `TopCom_Arena/GameJam_Data/StreamingAssets/match_frames.json` e transmite o `.zip`, sem guardar cópias por partida. **Sem a pasta raiz `TopCom_Arena/`, o replay é gravado num caminho que o jogo não lê.**
+- Compacte a build em `.zip` **dentro de uma pasta raiz `GameJam_Arena/`** (`GameJam_Arena/GameJam.exe`, `GameJam_Arena/GameJam_Data/...`) e envie-a pela aba **Desafio → Visualizador de Partida**. O BOCA valida que o zip contém `GameJam.exe`.
+- A cada download, o BOCA copia o pacote, grava o replay da partida em `GameJam_Arena/GameJam_Data/StreamingAssets/match_frames.json` e transmite o `.zip`, sem guardar cópias por partida. **Sem a pasta raiz `GameJam_Arena/`, o replay é gravado num caminho que o jogo não lê.**
 - A build é **somente para Windows**.

@@ -1,21 +1,37 @@
 #!/bin/bash
 # ==============================================================================
-# TopCom Battle Orchestrator - Construtor de Bots
+# Game Jam PET - Construtor de Bots
 # ==============================================================================
-# Compila e injeta o wrapper oficial em códigos C, C++, Python e Java.
+# Compila e injeta o wrapper oficial em códigos C, C++, Python e Java. É a MESMA
+# montagem usada pela partida (script.sh) e pelo validador do BOCA (compile.sh dos
+# pacotes de linguagem): quem recebe YES no validador compila aqui também.
+#
 # Uso: bash wrappers/build_bot.sh <arquivo_fonte> <arquivo_saida>
 #      bash wrappers/build_bot.sh --preparar c|cpp ...   # só pré-compila os wrappers
 #
+# Verificações antes de compilar (mensagens "ERRO DE VALIDACAO: ..."):
+#   C/C++  pensar() presente, sem system(), sem #include com caminho absoluto ou ".."
+#   Java   pensar() presente, sem Runtime.getRuntime/ProcessBuilder/System.exit, sem package;
+#          a classe principal é a pública (ou a que contém pensar)
+#   Python AST (wrappers/checar_python.py): sintaxe, def pensar(estado), só biblioteca padrão,
+#          sem os/subprocess/eval/exec/__import__/importlib, sem input()/sys.stdin no topo,
+#          sem if __name__ == "__main__"
+# Depois da compilação, erros conhecidos (main() extra, assinatura de pensar errada...)
+# viram uma mensagem clara na primeira linha; o resto da saída do compilador vem em seguida
+# apenas quando o erro não foi reconhecido.
+#
 # Os wrappers de C e C++ são pré-compilados uma vez e reaproveitados enquanto os
 # fontes, o compilador e as flags não mudarem (assinatura SHA-256). Ficam em
-# TOPCOM_WRAPPERS_BUILD (padrão: build/wrappers):
+# TOPCOM_WRAPPERS_BUILD (padrão: build/wrappers; o validador usa
+# /var/cache/gamejam-validador). Se o diretório não for gravável, usa um temporário.
 #   C   -> c/c_wrapper.o: main + JSON -> structs de arena.h. Cada bot só compila
 #          o próprio .c (gcc -std=c99 -include arena.h) e é ligado a ele.
 #   C++ -> cpp/cpp_header.hpp.gch (cabeçalho pré-compilado com nlohmann/json) e
 #          cpp/cpp_footer.o (main + E/S JSON). Cada bot compila com
 #          -include cpp_header.hpp e é ligado ao cpp_footer.o.
 # O contrato do aluno não muda: C++ escreve json pensar(const json& estado) sem
-# main nem includes; C escreve Acao pensar(const Estado *e).
+# main; C escreve Acao pensar(const Estado *e). #include "arena.h" (C) e
+# #include <nlohmann/json.hpp> (C++) funcionam como no kit do participante.
 # O script.sh chama --preparar antes de compilar os bots em paralelo.
 # ==============================================================================
 set -euo pipefail
@@ -24,6 +40,7 @@ DIR_WRAPPERS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIR_ROOT="$(cd "${DIR_WRAPPERS}/.." && pwd)"
 DIR_PREBUILT="${TOPCOM_WRAPPERS_BUILD:-${DIR_ROOT}/build/wrappers}"
 NLOHMANN_INC="${DIR_ROOT}/engine"
+GSON_JAR="${DIR_ROOT}/libs/gson-2.10.1.jar"
 
 CXX_FLAGS=(-O2 -std=c++20)
 CC_FLAGS=(-O2 -std=c99)
@@ -37,6 +54,12 @@ limpar() {
 }
 trap limpar EXIT
 
+# Recusa o bot com a mensagem que a equipe verá no [Ver Erro]
+recusar() {
+    echo "ERRO DE VALIDACAO: $*" >&2
+    exit 1
+}
+
 # Assinatura dos wrappers pré-compilados: compilador + flags + fontes
 assinatura() {
     { g++ --version | head -n 1; echo "${CXX_FLAGS[*]} | ${CC_FLAGS[*]}"; cat "$@"; } | sha256sum | cut -d' ' -f1
@@ -47,42 +70,65 @@ compilar_para() {
     local destino="$1"; shift
     local tmp="${destino}.tmp.$$"
     TEMPORARIOS+=("$tmp")
-    "$@" -o "$tmp"
+    LC_ALL=C "$@" -o "$tmp"
     mv -f "$tmp" "$destino"
 }
 
+# Diretório do cache para uma linguagem; se não der para gravar, usa um temporário
+dir_cache_gravavel() {
+    local dir="${DIR_PREBUILT}/$1"
+    if mkdir -p "$dir" 2>/dev/null && [[ -w "$dir" ]]; then
+        echo "$dir"
+        return
+    fi
+    local tmp
+    tmp="$(mktemp -d /tmp/gamejam_wrappers_XXXXXX)"
+    TEMPORARIOS+=("$tmp")
+    mkdir -p "${tmp}/$1"
+    echo "${tmp}/$1"
+}
+
+CACHE_C=""
+CACHE_CPP=""
+
 preparar_c() {
+    [[ -z "$CACHE_C" ]] || return 0
     local dir="${DIR_PREBUILT}/c"
     local ass
     ass="$(assinatura "${DIR_WRAPPERS}/c_wrapper.cpp" "${DIR_WRAPPERS}/arena.h" "${NLOHMANN_INC}/nlohmann/json.hpp")"
     if [[ -f "${dir}/c_wrapper.o" && "$(cat "${dir}/assinatura" 2>/dev/null)" == "$ass" ]]; then
+        CACHE_C="$dir"
         return 0
     fi
-    mkdir -p "$dir"
+    dir="$(dir_cache_gravavel c)"
     rm -f "${dir}/assinatura"
     compilar_para "${dir}/c_wrapper.o" \
         g++ "${CXX_FLAGS[@]}" -I"${DIR_WRAPPERS}" -I"${NLOHMANN_INC}" -c "${DIR_WRAPPERS}/c_wrapper.cpp"
     echo "$ass" > "${dir}/assinatura"
+    CACHE_C="$dir"
 }
 
 preparar_cpp() {
+    [[ -z "$CACHE_CPP" ]] || return 0
     local dir="${DIR_PREBUILT}/cpp"
     local ass
     ass="$(assinatura "${DIR_WRAPPERS}/cpp_header.hpp" "${DIR_WRAPPERS}/cpp_footer.cpp" "${NLOHMANN_INC}/nlohmann/json.hpp")"
     if [[ -f "${dir}/cpp_header.hpp.gch" && -f "${dir}/cpp_footer.o" && \
           "$(cat "${dir}/assinatura" 2>/dev/null)" == "$ass" ]]; then
+        CACHE_CPP="$dir"
         return 0
     fi
-    mkdir -p "$dir"
+    dir="$(dir_cache_gravavel cpp)"
     rm -f "${dir}/assinatura"
     # O .gch só é usado quando está ao lado do cabeçalho passado em -include
     cp "${DIR_WRAPPERS}/cpp_header.hpp" "${dir}/cpp_header.hpp"
     compilar_para "${dir}/cpp_header.hpp.gch" \
-        g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -x c++-header "${dir}/cpp_header.hpp"
+        g++ "${CXX_FLAGS[@]}" -w -I"${NLOHMANN_INC}" -x c++-header "${dir}/cpp_header.hpp"
     compilar_para "${dir}/cpp_footer.o" \
         g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -include "${dir}/cpp_header.hpp" -Winvalid-pch \
             -c "${DIR_WRAPPERS}/cpp_footer.cpp"
     echo "$ass" > "${dir}/assinatura"
+    CACHE_CPP="$dir"
 }
 
 # --- Modo de preparação: bash build_bot.sh --preparar c cpp ---
@@ -113,65 +159,128 @@ EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
 # Uma falha de compilação não pode deixar o binário de uma partida anterior no lugar
 rm -f "${EXE_FILE}"
 
+# Log da compilação (stdout + stderr dos compiladores)
+LOG_COMPILACAO="$(mktemp /tmp/gamejam_build_XXXXXX.log)"
+TEMPORARIOS+=("${LOG_COMPILACAO}")
+DIR_FONTE="$(cd "$(dirname "${SOURCE_FILE}")" && pwd)"
+
+# Roda um comando juntando a saída no log. Mensagens do compilador em inglês/ASCII
+# (aparecem no [Ver Erro]); o resultado é o código de saída do comando.
+compilar() {
+    LC_ALL=C "$@" >> "${LOG_COMPILACAO}" 2>&1
+}
+
+# Erro conhecido de compilação/ligação -> mensagem clara (vazio se não reconhecer)
+mensagem_amigavel() {
+    local lang="$1"
+    if grep -qE "multiple definition of .main.|redefinition of .(int )?main" "${LOG_COMPILACAO}"; then
+        echo "nao crie a funcao main(): a arena ja tem a dela. Apague a sua main()."
+        return
+    fi
+    case "$lang" in
+        c)
+            if grep -q "conflicting types for 'pensar'" "${LOG_COMPILACAO}"; then
+                echo "a assinatura de pensar esta errada: use exatamente 'Acao pensar(const Estado *e)'."
+            elif grep -q "undefined reference to .pensar'" "${LOG_COMPILACAO}"; then
+                echo "a funcao 'Acao pensar(const Estado *e)' nao esta definida (ela so aparece em comentario ou foi apenas declarada)."
+            fi
+            ;;
+        cpp)
+            if grep -qE "undefined reference to .pensar\(|ambiguating new declaration of .*pensar|call of overloaded .pensar|conflicting declaration .*pensar" "${LOG_COMPILACAO}"; then
+                echo "a assinatura de pensar esta errada: use exatamente 'json pensar(const json& estado)'."
+            fi
+            ;;
+        java)
+            if grep -q "JavaRunner.java:[0-9]*: error" "${LOG_COMPILACAO}"; then
+                echo "o metodo pensar esta errado ou fora da classe principal: use exatamente 'public static JsonObject pensar(JsonObject estado)', dentro da classe publica do arquivo."
+            fi
+            ;;
+    esac
+}
+
+# Falha de compilação: mensagem clara (se houver) ou a saída do compilador sem os caminhos do servidor
+falhar_compilacao() {
+    local lang="$1" amigavel
+    amigavel="$(mensagem_amigavel "$lang")"
+    if [[ -n "$amigavel" ]]; then
+        echo "ERRO DE VALIDACAO: ${amigavel}" >&2
+    else
+        echo "ERRO DE COMPILACAO: o compilador recusou o seu codigo." >&2
+        sed -e "s#${DIR_FONTE}/##g" -e 's#/tmp/java_build_[A-Za-z0-9]*/##g' "${LOG_COMPILACAO}" >&2
+    fi
+    exit 1
+}
+
+# Avisos do compilador numa compilação que deu certo
+mostrar_avisos() {
+    if [[ -s "${LOG_COMPILACAO}" ]]; then
+        sed -e "s#${DIR_FONTE}/##g" -e 's#/tmp/java_build_[A-Za-z0-9]*/##g' "${LOG_COMPILACAO}" >&2
+    fi
+}
+
 case "$EXT" in
     cpp)
+        python3 -I "${DIR_WRAPPERS}/checar_fonte.py" cpp "${SOURCE_FILE}" || exit 1
         preparar_cpp
-        PCH_DIR="${DIR_PREBUILT}/cpp"
         OBJ_BOT="${EXE_FILE}_bot.o"
         TEMPORARIOS+=("${OBJ_BOT}")
 
         # Código do aluno com o cabeçalho pré-compilado (mesmo -include do validador do BOCA)
-        g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -include "${PCH_DIR}/cpp_header.hpp" -Winvalid-pch \
-            -x c++ -c "${SOURCE_FILE}" -o "${OBJ_BOT}"
+        compilar g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" \
+            -include "${CACHE_CPP}/cpp_header.hpp" -Winvalid-pch \
+            -x c++ -c "${SOURCE_FILE}" -o "${OBJ_BOT}" || falhar_compilacao cpp
 
-        if ! g++ "${OBJ_BOT}" "${PCH_DIR}/cpp_footer.o" -o "${EXE_FILE}" -lm; then
+        if ! compilar g++ "${OBJ_BOT}" "${CACHE_CPP}/cpp_footer.o" -o "${EXE_FILE}" -lm; then
             # Compilou, mas não ligou ao main pré-compilado (ex.: pensar() declarada inline):
             # repete como antes, com cabeçalho + código + rodapé numa única unidade.
-            echo "[build_bot] Ligacao com o main pre-compilado falhou; compilando em unidade unica." >&2
             TMP_SRC="${EXE_FILE}_combined.cpp"
             TEMPORARIOS+=("${TMP_SRC}")
             cat "${DIR_WRAPPERS}/cpp_header.hpp" "${SOURCE_FILE}" "${DIR_WRAPPERS}/cpp_footer.cpp" > "${TMP_SRC}"
-            g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" "${TMP_SRC}" -o "${EXE_FILE}" -lm
+            compilar g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" "${TMP_SRC}" -o "${EXE_FILE}" -lm \
+                || falhar_compilacao cpp
         fi
+        mostrar_avisos
         ;;
 
     c)
         # Código do competidor em C99 com arena.h injetado; wrapper de I/O (C++20) pré-compilado
+        python3 -I "${DIR_WRAPPERS}/checar_fonte.py" c "${SOURCE_FILE}" || exit 1
         preparar_c
         OBJ_BOT="${EXE_FILE}_bot.o"
         TEMPORARIOS+=("${OBJ_BOT}")
-        gcc "${CC_FLAGS[@]}" -include "${DIR_WRAPPERS}/arena.h" -x c -c "${SOURCE_FILE}" -o "${OBJ_BOT}"
-        g++ "${OBJ_BOT}" "${DIR_PREBUILT}/c/c_wrapper.o" -o "${EXE_FILE}" -lm
+        compilar gcc "${CC_FLAGS[@]}" -I"${DIR_WRAPPERS}" -include "${DIR_WRAPPERS}/arena.h" \
+            -x c -c "${SOURCE_FILE}" -o "${OBJ_BOT}" || falhar_compilacao c
+        compilar g++ "${OBJ_BOT}" "${CACHE_C}/c_wrapper.o" -o "${EXE_FILE}" -lm || falhar_compilacao c
+        mostrar_avisos
         ;;
 
     py)
-        # Confere a sintaxe já aqui (como o validador do BOCA), sem gravar .pyc: um erro de
-        # sintaxe vira exclusão com motivo, e não uma desconexão no tick 0
-        python3 -c 'import sys; compile(open(sys.argv[1], "rb").read(), sys.argv[1], "exec")' "${SOURCE_FILE}"
+        # Análise estática pela AST (sem executar o código): sintaxe, pensar(estado), imports e afins.
+        python3 -I "${DIR_WRAPPERS}/checar_python.py" "${SOURCE_FILE}" || exit 1
         WRAPPER_FILE="${DIR_WRAPPERS}/wrapper.py"
         cat "${SOURCE_FILE}" "${WRAPPER_FILE}" > "${EXE_FILE}"
         chmod +x "${EXE_FILE}"
         ;;
 
     java)
-        GSON_JAR="${DIR_ROOT}/libs/gson-2.10.1.jar"
+        python3 -I "${DIR_WRAPPERS}/checar_fonte.py" java "${SOURCE_FILE}" > "${LOG_COMPILACAO}.classe" || exit 1
+        TEMPORARIOS+=("${LOG_COMPILACAO}.classe")
+        CLASS_NAME="$(cat "${LOG_COMPILACAO}.classe")"
+
         WRAPPER_SRC="${DIR_WRAPPERS}/wrapper.java"
         BUILD_TMP="$(mktemp -d /tmp/java_build_XXXXXX)"
         TEMPORARIOS+=("${BUILD_TMP}")
 
-        CLASS_NAME=$(grep -oE '(public\s+)?class\s+[A-Za-z0-9_]+' "$SOURCE_FILE" | head -n1 | awk '{print $NF}')
-        if [ -z "$CLASS_NAME" ]; then
-            CLASS_NAME="Solution"
-        fi
-
         cp "$SOURCE_FILE" "${BUILD_TMP}/${CLASS_NAME}.java"
         sed "s/CLASS_PLACEHOLDER/${CLASS_NAME}/g" "$WRAPPER_SRC" > "${BUILD_TMP}/JavaRunner.java"
-        javac -cp "${GSON_JAR}" "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java"
+        compilar javac -encoding UTF-8 -cp "${GSON_JAR}" "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java" \
+            || falhar_compilacao java
 
         (cd "${BUILD_TMP}" && jar -xf "${GSON_JAR}")
         rm -f "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java"
         jar cfe "${EXE_FILE}" JavaRunner -C "${BUILD_TMP}" .
         chmod +x "${EXE_FILE}"
+        mostrar_avisos
         ;;
 
     *)

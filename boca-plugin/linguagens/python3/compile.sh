@@ -1,21 +1,5 @@
 #!/bin/bash
-# Validador Estrutural BOCA (Python)
-SOURCE_FILE="$1"
-EXE_FILE="$2"
-
-if ! grep -q -E "def pensar\s*\(" "$SOURCE_FILE"; then
-    echo "ERRO DE VALIDACAO: A funcao pensar(estado) nao foi encontrada no seu bot."
-    exit 1
-fi
-
-if grep -q -E "import\s+os|from\s+os|import\s+subprocess|from\s+subprocess|eval\s*\(|exec\s*\(" "$SOURCE_FILE"; then
-    echo "ERRO DE VALIDACAO: Foram detectados comandos ou imports maliciosos nao permitidos."
-    exit 1
-fi
-
-python3 -m py_compile "$SOURCE_FILE" || exit 1
-
-cp "$SOURCE_FILE" "$EXE_FILE"
-chmod +x "$EXE_FILE"
-exit 0
-
+# Validador BOCA (Python 3): mesma montagem da partida (wrappers/build_bot.sh).
+# A lógica está em compile_comum.sh (modos: <fonte> <saida> e --preparar).
+LINGUAGEM=py
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compile_comum.sh"

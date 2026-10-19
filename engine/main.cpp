@@ -539,7 +539,10 @@ public:
             } else {
                 h.type = "LASER";
                 h.pos = {Config::ARENA_WIDTH / 2.0, Config::ARENA_HEIGHT / 2.0};
-                h.angle = 0.0;
+                // Ângulo inicial sorteado pelo rng da partida (seed): sem isso o feixe nascia
+                // sempre em 0 graus e queimava sempre o mesmo setor da arena.
+                std::uniform_real_distribution<double> dist_ang(0.0, 360.0);
+                h.angle = dist_ang(rng);
                 h.angular_vel = 30.0; // feixe rotatório
                 h.duration = 5.0;
                 h.timer = 2.5;

@@ -65,7 +65,7 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já in
 - `excluidos[]`: bots que não entraram, na ordem em que foram descartados.
 - Se a engine não gerar o `match_frames.json`, o `script.sh` termina com código diferente de 0.
 
-**Reprodutibilidade.** A seed controla hazards e itens; as posições iniciais são fixas. Com a mesma seed, os mesmos bots e bots determinísticos, a partida se repete (frames idênticos, verificado com 14 e com 12 bots mistos). Fontes de não determinismo que restam:
+**Reprodutibilidade.** A seed controla hazards (inclusive o ângulo inicial do laser) e itens; as posições iniciais são fixas. O sorteio do ângulo do laser (commit 78ca8d6) mudou a sequência do rng: seeds anteriores a ele não reproduzem as partidas antigas, mas os replays gravados continuam válidos. Com a mesma seed, os mesmos bots e bots determinísticos, a partida se repete (frames idênticos, verificado com 14 e com 12 bots mistos). Fontes de não determinismo que restam:
 - **tempo real:** um bot que demora mais de 50 ms num tick perde aquele tick, e isso depende da carga da máquina;
 - **o próprio bot:** `random` sem seed, relógio, `srand(time(NULL))`, ordem de `HashMap` em Java etc. Para Python, o `script.sh` fixa `PYTHONHASHSEED=0`;
 - **compilador/biblioteca:** as distribuições de `<random>` são as da libstdc++; outra toolchain pode gerar outra sequência para a mesma seed.
@@ -169,7 +169,7 @@ public class Solution {
 | Itens | `HEAL` (+30 HP) · `ENERGY` (+50 de energia) · um a cada 150 ticks, se houver menos de 4 no mapa |
 | Perigos | ticks 0, 200 e 400 (máx. 3 ativos); depois do tick 400, a cada 90 ticks (máx. 5 ativos); tipo sorteado |
 | Artilharia | aviso de 3 s · raio 80 (104 se surgir depois do tick 400) · 40 de dano a quem estiver a até raio + 20 |
-| Laser | semirreta a partir do centro (500, 500) · gira 30°/s · aviso de 2,5 s · queima 5 s · 30 de dano/s a até 26 do feixe |
+| Laser | semirreta a partir do centro (500, 500) · ângulo inicial sorteado pela seed · gira 30°/s · aviso de 2,5 s · queima 5 s · 30 de dano/s a até 26 do feixe |
 | Zona | a partir do **tick 600**, o raio seguro encolhe de 550 até 80. Fora dele, 2,5 HP a cada 10 ticks |
 | Timeout | 50 ms por tick para responder; 20 ticks seguidos sem resposta → tanque desativado (`[TIMEOUT]`). No tick 0 o prazo é de até 5 s, para os processos terminarem de iniciar (a JVM leva centenas de ms) |
 | Processo encerrado | o bot que termina ou fecha o pipe é destruído (`[DESCONEXAO]`). **O bot precisa ficar vivo a partida inteira** |

@@ -14,7 +14,10 @@
 #   - a compilação roda num diretório temporário próprio (cwd), nunca na pasta do pacote;
 #   - como root (jail), é rebaixada para o usuário sem privilégio (padrão: bocajail);
 #   - tempo máximo próprio (padrão 50 s), abaixo do timeout do PHP (60 s).
-# Variáveis: TOPCOM_WRAPPERS_BUILD (cache; padrão /var/cache/gamejam-validador),
+#   - funciona nos dois contêineres: no jail roda como root e rebaixa para bocajail; no web
+#     (www-data, sem bocajail) roda como o usuário atual.
+# Variáveis: TOPCOM_WRAPPERS_BUILD (cache; padrão /var/cache/gamejam-validador, ou
+#            /tmp/gamejam-validador-<uid> quando o padrão não é gravável),
 #            GAMEJAM_USUARIO_VALIDADOR, GAMEJAM_TEMPO_COMPILACAO.
 # ==============================================================================
 
@@ -22,7 +25,17 @@ PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_BOT="${PKG_DIR}/wrappers/build_bot.sh"
 USUARIO="${GAMEJAM_USUARIO_VALIDADOR:-bocajail}"
 LIMITE="${GAMEJAM_TEMPO_COMPILACAO:-50}"
-export TOPCOM_WRAPPERS_BUILD="${TOPCOM_WRAPPERS_BUILD:-/var/cache/gamejam-validador}"
+
+# Cache dos wrappers pré-compilados. Padrão: /var/cache/gamejam-validador (jail: criado e entregue ao
+# usuário sem privilégio). Onde não dá para criá-lo (web, rodando como www-data), usa um cache por
+# usuário em /tmp, aquecido na primeira validação.
+if [[ -z "${TOPCOM_WRAPPERS_BUILD:-}" ]]; then
+    TOPCOM_WRAPPERS_BUILD="/var/cache/gamejam-validador"
+    if ! mkdir -p "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || [[ ! -w "$TOPCOM_WRAPPERS_BUILD" && "$(id -u)" != "0" ]]; then
+        TOPCOM_WRAPPERS_BUILD="/tmp/gamejam-validador-$(id -u)"
+    fi
+fi
+export TOPCOM_WRAPPERS_BUILD
 
 case "${LINGUAGEM:-}" in
     c|cpp|java|py) ;;

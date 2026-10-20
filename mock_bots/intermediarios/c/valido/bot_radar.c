@@ -1,3 +1,24 @@
+#include "arena.h"
+
+/* Matematica basica (as mesmas funcoes do AJUDANTES do starter kit; antes ficavam no arena.h) */
+static inline double distancia(double x1, double y1, double x2, double y2) {
+    return hypot(x2 - x1, y2 - y1);
+}
+
+static inline double normalizar_angulo(double graus) {
+    double a = fmod(graus, 360.0);
+    return a < 0 ? a + 360.0 : a;
+}
+
+static inline double angulo_para(double x1, double y1, double x2, double y2) {
+    return normalizar_angulo(atan2(y2 - y1, x2 - x1) * 180.0 / M_PI);
+}
+
+static inline double diferenca_angulo(double de, double para) {
+    double d = normalizar_angulo(para - de);
+    return d > 180.0 ? d - 360.0 : d;
+}
+
 /* Bot de teste (C) - Radar: mira e persegue o inimigo mais próximo. */
 
 Acao pensar(const Estado *e) {

@@ -68,7 +68,7 @@ Ela **só facilita o acesso aos dados**: nenhum ajudante decide nada por você. 
 - Constantes: `HAZARD_ARTILHARIA = 0`, `HAZARD_LASER = 1`, `ITEM_CURA = 0`, `ITEM_ENERGIA = 1`.
 - **Em C** o estado já chega tipado (`e->tick`, `e->self`, `e->inimigos[i]` com `i < e->n_inimigos`, `e->hazards[i]`, `e->itens[i]`), então só há as funções de matemática e comentários.
 - **Para apagar os ajudantes:** remova a seção inteira, entre as linhas marcadas `AJUDANTES` e `FIM DOS AJUDANTES`, e leia o estado bruto (`dict` em Python, `json` em C++, `JsonObject` em Java). Em Java, apague também os `import` que ficarem sem uso (opcional). Para renomear um ajudante, troque o nome na definição e em todos os usos.
-- **Java:** tudo o que você criar (métodos e classes auxiliares) fica **dentro** da classe `MeuBot`, como as classes aninhadas do kit. Uma classe no nível do arquivo quebra o executor.
+- **Java:** o mais simples é criar tudo (métodos e classes auxiliares) **dentro** da classe `MeuBot`, como as classes aninhadas do kit. O `pensar` precisa estar na classe pública do arquivo.
 
 ## Envio pela guia Runs
 
@@ -79,12 +79,27 @@ Ela **só facilita o acesso aos dados**: nenhum ajudante decide nada por você. 
 
 ## Problemas comuns
 
-| Problema | Causa e solução |
+O motivo de um Compilation Error aparece no botão *Ver Erro*, sem acentos (de propósito). Nos casos reconhecidos, vem uma linha `ERRO DE VALIDACAO: ...`. Nos demais, vem `ERRO DE COMPILACAO: o compilador recusou o seu codigo.`, seguida da saída do compilador (em Python, `erro de sintaxe na linha N: ...`). Comentários não contam.
+
+| Mensagem (início) | Linguagem | O que fazer |
+| :--- | :--- | :--- |
+| `... pensar ... nao foi encontrada` / `nao foi encontrado` | todas | Defina `pensar` com a assinatura da tabela acima (em Python, no nível do arquivo, sem recuo). |
+| `a assinatura de pensar esta errada` | C, C++ | Use exatamente a assinatura do kit (com `const`). |
+| `a funcao 'Acao pensar(const Estado *e)' nao esta definida` | C | Escreva o corpo da função (não basta declará-la). |
+| `o metodo pensar esta errado ou fora da classe principal` | Java | `public static JsonObject pensar(JsonObject estado)`, dentro da classe pública do arquivo. |
+| `nao crie a funcao main()` | C, C++ | O programa principal é o da arena: apague a sua `main`. (Em Java, um `main` a mais é ignorado.) |
+| `remova a linha 'package'` | Java | Envie um único arquivo, sem `package`. |
+| `a biblioteca externa '...' nao e permitida` | Python | Só a biblioteca padrão (`math`, `random`, `collections`, `heapq`...). numpy não existe no servidor, e outros arquivos seus também não: só um arquivo é enviado. |
+| `import relativo ... nao e permitido` | Python | Mantenha todo o código num único arquivo. |
+| `remova o bloco "if __name__ == '__main__':"` | Python | Apague o bloco: a arena já chama `pensar(estado)`. |
+| `input() no nivel do arquivo` / `sys.stdin ... nao pode ser usado` | Python | Não leia a entrada: o estado chega como argumento de `pensar`. |
+| `o modulo 'os' nao e permitido`, `o uso de eval() ...`, `uso de funcoes de sistema (system)`, `chamada de execucao de sistema` | todas | Recursos de sistema são proibidos (Regulamento, item 10.3): `os`, `subprocess`, `importlib`, `eval`, `exec` e `__import__` em Python; `system` em C/C++; `Runtime.getRuntime`, `ProcessBuilder` e `System.exit` em Java. |
+| `o #include "..." (linha N) nao e permitido` | C, C++ | Use só bibliotecas padrão e os arquivos do kit (`arena.h`, `nlohmann/json.hpp`). |
+| `ERRO DE COMPILACAO` com `undefined reference to 'distancia'` | C | As funções de matemática não estão no `arena.h`: mantenha (ou copie) as da seção de ajudantes do `bot.c`. |
+| `Timeout de compilação excedido (60s)` | todas | Simplifique macros, templates ou includes pesados. |
+
+| Outros problemas | Causa e solução |
 | :--- | :--- |
-| Compilation Error com `main` | O programa principal é o da arena. Não crie `main` nem laço de leitura da entrada. |
-| Compilation Error em Java com `package` | Envie o arquivo sem `package`, com tudo dentro da classe `MeuBot`. |
-| Compilation Error em Python com `import` | Só a biblioteca padrão (`math`, `random`, `collections`...). numpy e outras bibliotecas externas não existem no servidor. Também não importe outros arquivos seus: só um arquivo é enviado. |
-| Compilation Error com `os`, `subprocess`, `eval`, `exec`, `system`, `Runtime.getRuntime`, `ProcessBuilder`, `System.exit` | Recursos de sistema são proibidos (Regulamento, item 10.3). |
 | O tanque fica parado ou não atira | Confira os tipos: `shoot` e `shield` precisam ser booleanos, e `throttle`, `turn` e `turret_angle`, números. Com tipo errado, a arena ignora o tick inteiro. Use o montador. |
 | Em C, a torre vira para 0° sozinha | Em C a torre é sempre enviada. Comece de `a.turret_angle = e->self.turret_angle`. |
 | `print`/`printf`/`System.out` não aparece | A saída padrão é do executor e vai para um log descartado. Depure na sua máquina ou pelo visualizador. |

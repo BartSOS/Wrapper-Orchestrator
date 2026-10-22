@@ -5,8 +5,10 @@ O **Battle Orchestrator** é o motor da Arena: recebe os códigos das equipes, i
 O módulo é **autônomo**: roda igual na linha de comando (fora do BOCA) e dentro do contêiner `gamejam-boca-web-1`, quando um juiz ou admin clica em **Executar Engine**.
 
 ```text
-códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (até 1500 ticks) ──▶ match_frames.json ──▶ Unity (GameJam.exe)
+códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (até 1500 ticks) ──▶ match_frames.json ──▶ Unity (build Linux)
 ```
+
+Documentos para as equipes: o enunciado do Desafio (fonte em `Boca-Game-Jam-Pet/desafio/enunciado/`) e o starter kit (`starter-kit/`, com o `README.md` que vai no zip).
 
 ---
 
@@ -26,6 +28,7 @@ códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (at�
 | `TOPCOM_SEED` | sorteada | Seed da partida (inteiro de 0 a 4294967295). Sem ela, ou com valor inválido, a engine sorteia uma e a registra no JSON. |
 | `TOPCOM_MAX_BOTS` | 20 | Limite de bots na partida (`script.sh` e engine). O `--benchmark` usa para medir acima de 20. |
 | `TOPCOM_COMPILE_JOBS` | automático | Compilações simultâneas. Automático: `min(nproc, memória disponível / 500 MB)`, mínimo 1 (em contêiner com limite de memória, vale o que sobra no cgroup). |
+| `TOPCOM_TIMEOUT_PARTIDA` | calculado | Orçamento de tempo real da partida, em segundos (seção 3). Sobrepõe o cálculo; só para ensaios. |
 
 O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já inclui `TOPCOM_SEED` (sorteada pelo BOCA para cada partida e gravada no resultado), `TOPCOM_MAX_BOTS` (20, item 7.8) e `TOPCOM_COMPILE_JOBS` (se definido no servidor). Para reproduzir uma partida do BOCA, use a `seed` do `match_frames.json` com `gerenciar_engine.py --testar --seed X`.
 
@@ -56,13 +59,13 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já in
 
 - `bots[]` vem em ordem de `id` (`bots[id-1]`); `id` é o slot da arena (ordem alfabética dos nomes) e é o mesmo `id` dos `tanks` dos frames.
 - `lang`: `"C"`, `"C++20"`, `"Java"` ou `"Python 3"`.
-- `posicao` (1..N) segue o regulamento 8.4.1: vivo no fim > mais abates > mais vida > eliminado mais tarde > menor `id`. O último critério do regulamento é a ordem de inscrição; na engine ele vira o `id` do slot, ou seja, a ordem alfabética do nome (username), que coincide com a inscrição quando as contas são numeradas em sequência. A vida de um tanque destruído conta como 0.
+- `posicao` (1..N) segue o regulamento 8.4.1: vivo no fim > mais abates > mais vida > eliminado mais tarde > menor `id`. O último critério do regulamento é a ordem alfabética do nome de usuário da equipe no BOCA, que é exatamente o `id` do slot. A vida de um tanque destruído conta como 0.
 - `vencedor` é `true` só para `posicao` 1; o `vencedor` do topo é o `nome` dele.
 - `tick_eliminacao`: tick em que o tanque foi destruído, desconectou ou estourou o timeout (`null` se terminou vivo). Campo extra, além do C1.
 - `excluidos[]`: bots que não entraram, na ordem em que foram descartados.
 - Se a engine não gerar o `match_frames.json`, o `script.sh` termina com código diferente de 0.
 
-**Reprodutibilidade.** A seed controla hazards e itens; as posições iniciais são fixas. Com a mesma seed, os mesmos bots e bots determinísticos, a partida se repete (frames idênticos, verificado com 14 e com 12 bots mistos). Fontes de não determinismo que restam:
+**Reprodutibilidade.** A seed controla hazards (inclusive o ângulo inicial do laser) e itens; as posições iniciais são fixas. O sorteio do ângulo do laser (commit 78ca8d6) mudou a sequência do rng, e os temporizadores passaram a durar exatamente `T / TICK_DT` ticks (638c72c: recarga 10, aviso do laser 25, queima 50, aviso da artilharia 30). Por isso, seeds anteriores a esses commits não reproduzem as partidas antigas, mas os replays gravados continuam válidos. Com a mesma seed, os mesmos bots e bots determinísticos, a partida se repete (frames idênticos, verificado com 14 e com 12 bots mistos). Fontes de não determinismo que restam:
 - **tempo real:** um bot que demora mais de 50 ms num tick perde aquele tick, e isso depende da carga da máquina;
 - **o próprio bot:** `random` sem seed, relógio, `srand(time(NULL))`, ordem de `HashMap` em Java etc. Para Python, o `script.sh` fixa `PYTHONHASHSEED=0`;
 - **compilador/biblioteca:** as distribuições de `<random>` são as da libstdc++; outra toolchain pode gerar outra sequência para a mesma seed.
@@ -72,6 +75,10 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já in
 ## 2. O que o Competidor Escreve
 
 Apenas a função `pensar(estado)`, chamada a cada tick. O competidor **não** escreve `main()`, não lê `stdin` e não faz parsing de JSON: os wrappers fazem isso.
+
+O ponto de partida da equipe é o `starter-kit/` (`c/bot.c` + `arena.h`, `cpp/bot.cpp` + `nlohmann/json.hpp`, `java/MeuBot.java` + `gson.jar`, `python/bot.py` e o `README.md`). Cada arquivo traz uma seção de **ajudantes** editável (acessores do estado, montador da ação e matemática básica), descrita em `starter-kit/AJUDANTES.md` (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`).
+
+O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, então só dá YES ao código que compila exatamente como na partida. `main()` próprio (C/C++), `package` em Java, import relativo, bloco `if __name__ == "__main__":` ou biblioteca fora da padrão em Python dão Compilation Error. O texto exato de cada mensagem (`ERRO DE VALIDACAO: ...` / `ERRO DE COMPILACAO: ...`) está em `starter-kit/ERROS_VALIDADOR.md` (contrato C-K3, fora do zip).
 
 ### Entrada — `estado`
 
@@ -99,7 +106,7 @@ Campos ausentes assumem 0 ou `false`; a torre mantém o ângulo atual.
 
 ### Modelos por linguagem
 
-**C (C99)**: o cabeçalho `wrappers/arena.h` é injetado automaticamente e define as structs `Estado`, `Tanque`, `Inimigo`, `Hazard`, `Item` e `Acao`, além das funções auxiliares `distancia()`, `angulo_para()`, `normalizar_angulo()` e `diferenca_angulo()`. O código do aluno é compilado com `gcc -std=c99` e ligado ao wrapper interno `wrappers/c_wrapper.cpp` (C++20), que converte o JSON nas structs. `printf()` do aluno vai para o `stderr` e não corrompe a comunicação. Listas maiores que `MAX_INIMIGOS`/`MAX_HAZARDS`/`MAX_ITENS` são truncadas.
+**C (C99)**: o cabeçalho `wrappers/arena.h` é injetado automaticamente e define as structs `Estado`, `Tanque`, `Inimigo`, `Hazard`, `Item` e `Acao`. As funções de matemática (`distancia()`, `angulo_para()`, `normalizar_angulo()` e `diferenca_angulo()`) ficam no `bot.c` do kit, à vista da equipe. O código do aluno é compilado com `gcc -std=c99` e ligado ao wrapper interno `wrappers/c_wrapper.cpp` (C++20), que converte o JSON nas structs. `printf()` do aluno vai para o `stderr` e não corrompe a comunicação. Listas maiores que `MAX_INIMIGOS`/`MAX_HAZARDS`/`MAX_ITENS` são truncadas.
 ```c
 Acao pensar(const Estado *e) {
     Acao a = {0};
@@ -159,9 +166,10 @@ public class Solution {
 | Tanque | raio 20 · velocidade máx. 50/s · giro 90°/s · **100 HP** · **100 de energia** (regenera 5/s) |
 | Tiro | custa 20 de energia · recarga de 1 s · projétil com velocidade 300 e **25 de dano** |
 | Escudo | consome 50 de energia/s · **só ativa com mais de 50% de energia** · bloqueia projéteis, reduz artilharia a 20% e laser a 10% |
-| Itens | `HEAL` (+30 HP) · `ENERGY` (+50 de energia) |
-| Artilharia | aviso de 3 s · raio 80 · 40 de dano (fica maior e mais frequente após o tick 400) |
-| Laser | feixe giratório (30°/s) · 30 de dano/s |
+| Itens | `HEAL` (+30 HP) · `ENERGY` (+50 de energia) · um a cada 150 ticks, se houver menos de 4 no mapa |
+| Perigos | ticks 0, 200 e 400 (máx. 3 ativos); depois do tick 400, a cada 90 ticks (máx. 5 ativos); tipo sorteado |
+| Artilharia | aviso de 3 s · raio 80 (104 se surgir depois do tick 400) · 40 de dano a quem estiver a até raio + 20 |
+| Laser | semirreta a partir do centro (500, 500) · ângulo inicial sorteado pela seed · gira 30°/s · aviso de 2,5 s · queima 5 s · 30 de dano/s a até 26 do feixe |
 | Zona | a partir do **tick 600**, o raio seguro encolhe de 550 até 80. Fora dele, 2,5 HP a cada 10 ticks |
 | Timeout | 50 ms por tick para responder; 20 ticks seguidos sem resposta → tanque desativado (`[TIMEOUT]`). No tick 0 o prazo é de até 5 s, para os processos terminarem de iniciar (a JVM leva centenas de ms) |
 | Processo encerrado | o bot que termina ou fecha o pipe é destruído (`[DESCONEXAO]`). **O bot precisa ficar vivo a partida inteira** |
@@ -170,7 +178,9 @@ public class Solution {
 
 **Protocolo com os bots** (uma linha JSON por mensagem): cada bot tem no máximo um estado pendente. A resposta de um tick só vale para aquele tick: se chegar atrasada, é descartada, e o estado seguinte só é enviado depois dela (um bot travado não enche o pipe nem trava a engine). Linhas que não são objeto JSON são ignoradas, e o `stderr` dos bots vai para `/dev/null`. Cada bot roda num grupo de processos próprio, encerrado inteiro quando o tanque é eliminado e no fim da partida.
 
-Isolamento de cada bot (`script.sh`): `timeout` de **30 s de tempo real** e `ulimit -v` de ~2 GB. Bots Java rodam com `-Xmx512m -XX:CompressedClassSpaceSize=64m -XX:+UseSerialGC`: sem isso a JVM reserva mais memória virtual que o `ulimit` e nem inicia. Os validadores do BOCA bloqueiam, já no envio, `os`, `subprocess`, `eval` e `exec` (Python), `system(` (C/C++) e `Runtime`, `ProcessBuilder` e `System.exit` (Java).
+**Tempo da partida** (`script.sh`): não há mais limite fixo de 30 s por bot, que matava todos os bots de partidas longas. Vale o prazo de 50 ms por tick da engine, e o script calcula um **orçamento** para a partida inteira: `PARTIDA_INICIO_MS + MAX_TICKS × nº de bots × RESPOSTA_MS + 30 s` de folga. Um **vigia global** (`timeout`) encerra a engine se o orçamento estourar. Cada bot recebe o orçamento + 15 s, só como rede de segurança. `TOPCOM_TIMEOUT_PARTIDA` sobrepõe o cálculo em ensaios.
+
+Isolamento de cada bot: `ulimit -v` de ~2 GB. Bots Java rodam com `-Xmx512m -XX:CompressedClassSpaceSize=64m -XX:+UseSerialGC`: sem isso a JVM reserva mais memória virtual que o `ulimit` e nem inicia. Os validadores do BOCA bloqueiam, já no envio, `os`, `subprocess`, `eval` e `exec` (Python), `system(` (C/C++) e `Runtime`, `ProcessBuilder` e `System.exit` (Java).
 
 ---
 
@@ -198,10 +208,10 @@ battle-orchestrator/
 │   ├── empacotar_pro_boca.sh
 │   └── out_boca_packages/ # .tgz gerados (ignorados pelo git)
 ├── mock_bots/
-│   ├── starter-kits/      # starter_kit.py / .cpp / .java / .c (modelos entregues às equipes)
 │   ├── bots-base/         # Conjunto canônico de bots de exemplo (testes, benchmark e checkpoint inicial)
-│   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c, starter_completo)
+│   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c)
 │   └── malicious_bots/    # fork_bomb, infinite_memory, file_system_hacker, system_call.c
+├── starter-kit/           # Kit das equipes: c/, cpp/, java/, python/ + README.md (zip via boca-desafio); AJUDANTES.md e ERROS_VALIDADOR.md ficam fora do zip
 ├── submissoes/            # Entrada da partida (conteúdo ignorado pelo git)
 └── build/, replays/       # Saídas geradas (ignoradas pelo git): build/engine, build/wrappers/, build/bots/, build/logs/
 ```
@@ -261,8 +271,9 @@ Os `.tgz` de `out_boca_packages/` são instalados em `private/languages/` (pela 
 
 ## 7. Visualizador Unity
 
-A build está em `../unity_engine_v1/` (`GameJam.exe`, `GameJam_Data/`, ...). O replay é lido de `GameJam_Data/StreamingAssets/match_frames.json`.
+As builds oficiais ficam no repositório `BartSOS/Build-Unity-Game-Jam`, para Linux e Windows.
 
-- Compacte a build em `.zip` **dentro de uma pasta raiz `GameJam_Arena/`** (`GameJam_Arena/GameJam.exe`, `GameJam_Arena/GameJam_Data/...`) e envie-a pela aba **Desafio → Visualizador de Partida**. O BOCA valida que o zip contém `GameJam.exe`.
-- A cada download, o BOCA copia o pacote, grava o replay da partida em `GameJam_Arena/GameJam_Data/StreamingAssets/match_frames.json` e transmite o `.zip`, sem guardar cópias por partida. **Sem a pasta raiz `GameJam_Arena/`, o replay é gravado num caminho que o jogo não lê.**
-- A build é **somente para Windows**.
+- **Competição: Linux.** É a build que vai para as equipes (as máquinas do laboratório são Linux): pasta `Unity-Build-Linux/`, executável `Unity-Build-Linux.x86_64`, dados em `Unity-Build-Linux_Data/`. A build Windows (`GameJam.exe`) é só para os testes da organização.
+- O pacote é um `.zip` **com a pasta raiz `GameJam_Arena/`**, gerado por `gerenciar_engine.py --empacotar-visualizer --plataforma linux|windows`, e enviado pela aba **Desafio → Visualizador de Partida**.
+- A cada download, o BOCA copia o pacote, grava o replay da partida em `StreamingAssets/match_frames.json` dentro da pasta de dados da build e transmite o `.zip`, sem guardar cópias por partida. **Sem a pasta raiz `GameJam_Arena/`, o replay é gravado num caminho que o jogo não lê.**
+- Para assistir no Linux: `unzip <arquivo>.zip && cd GameJam_Arena && chmod +x Unity-Build-Linux.x86_64 && ./Unity-Build-Linux.x86_64`.

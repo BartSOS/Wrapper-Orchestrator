@@ -41,7 +41,16 @@ ENGINE_FLAGS=(-O3 -std=c++20)
 BUILD_SCRIPT="${DIR_ROOT}/wrappers/build_bot.sh"
 
 # --- Configurações de Segurança e Limites ---
-TIMEOUT_SEG=30                # Tempo máximo de execução por partida/bot
+# Tempo da partida: não há mais limite fixo de relógio por bot (era 30 s e matava
+# todos os bots de partidas longas). A engine consulta os bots um por vez, com até
+# RESPOSTA_MS por bot por tick (PARTIDA_INICIO_MS no tick 0), por até MAX_TICKS
+# ticks; o orçamento da partida é calculado com essas constantes da engine:
+#   orçamento = PARTIDA_INICIO_MS + MAX_TICKS x nº de bots x RESPOSTA_MS + FOLGA_PARTIDA_SEG
+# Um vigia global (timeout) encerra a engine se o orçamento estourar; cada bot
+# recebe o orçamento + FOLGA_BOT_SEG, só como rede de segurança.
+# TOPCOM_TIMEOUT_PARTIDA (segundos) sobrepõe o orçamento calculado (ensaios).
+FOLGA_PARTIDA_SEG=30
+FOLGA_BOT_SEG=15
 MEM_LIMIT_KB=2048000
 # A JVM padrão reserva mais memória virtual que o ulimit -v acima (heap = 1/4 da RAM +
 # 1 GB de "compressed class space") e nem chega a iniciar. Estes limites cabem nos ~2 GB.
@@ -566,17 +575,43 @@ preparar_bots() {
 # ==============================================================================
 # 5. EXECUÇÃO PROTEGIDA (ULIMIT + TIMEOUT) VIA PIPES
 # ==============================================================================
+# Lê uma constante inteira da engine (constexpr int NOME = valor;) ou devolve o padrão.
+const_engine() {
+    local v
+    v="$(sed -nE "s/.*constexpr[[:space:]]+int[[:space:]]+$1[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p" "${ENGINE_SRC}" 2>/dev/null | head -n 1)"
+    if [[ "${v}" =~ ^[0-9]+$ ]] && [[ "${v}" -gt 0 ]]; then echo "${v}"; else echo "$2"; fi
+}
+
+# Orçamento de relógio da partida em segundos para N bots (ver Configurações).
+orcamento_partida_seg() {
+    local n="$1"
+    if [[ "${TOPCOM_TIMEOUT_PARTIDA:-}" =~ ^[0-9]+$ ]] && [[ "${TOPCOM_TIMEOUT_PARTIDA}" -gt 0 ]]; then
+        echo "${TOPCOM_TIMEOUT_PARTIDA}"
+        return
+    fi
+    local ticks resp inicio
+    ticks="$(const_engine MAX_TICKS 1500)"
+    resp="$(const_engine RESPOSTA_MS 50)"
+    inicio="$(const_engine PARTIDA_INICIO_MS 5000)"
+    local total_ms=$(( inicio + ticks * n * resp ))
+    echo $(( (total_ms + 999) / 1000 + FOLGA_PARTIDA_SEG ))
+}
+
 executar_batalha() {
     echo -e "${COR_AZUL}[5/6] Conectando IAs e iniciando simulacao na Arena TopCom...${COR_RESET}"
 
+    local orcamento timeout_bot
+    orcamento="$(orcamento_partida_seg "${#NOMES_BOTS[@]}")"
+    timeout_bot=$(( orcamento + FOLGA_BOT_SEG ))
+
     local comandos_protegidos=()
     for cmd in "${COMANDOS_BOTS[@]}"; do
-        local wrapper="timeout -k 3s ${TIMEOUT_SEG}s bash -c 'ulimit -v ${MEM_LIMIT_KB} 2>/dev/null || true; exec ${cmd}'"
+        local wrapper="timeout -k 3s ${timeout_bot}s bash -c 'ulimit -v ${MEM_LIMIT_KB} 2>/dev/null || true; exec ${cmd}'"
         comandos_protegidos+=("$wrapper")
     done
 
     echo -e "  ${TAG_INFO} Bots conectados via Pipes IPC: ${#NOMES_BOTS[@]}"
-    echo -e "  ${TAG_INFO} Parametros de isolamento: timeout=${TIMEOUT_SEG}s, ulimit_mem=${MEM_LIMIT_KB}KB"
+    echo -e "  ${TAG_INFO} Parametros de isolamento: orcamento da partida=${orcamento}s (vigia global), limite por bot=${timeout_bot}s, ulimit_mem=${MEM_LIMIT_KB}KB"
     if [[ -n "${TOPCOM_SEED:-}" ]]; then
         echo -e "  ${TAG_INFO} Seed solicitada: TOPCOM_SEED=${TOPCOM_SEED}"
     else
@@ -587,8 +622,15 @@ executar_batalha() {
     # A engine grava match_frames.json e replays/ no diretório atual: roda na raiz do orquestrador.
     # PYTHONHASHSEED fixo deixa a ordem de sets/dicts dos bots Python igual entre execuções.
     rm -f "${DIR_ROOT}/match_frames.json"
-    ( cd "${DIR_ROOT}" && PYTHONHASHSEED=0 "${ENGINE_BIN}" "${comandos_protegidos[@]}" ) || true
+    # Vigia global: a engine (e, por ela, os bots) é encerrada se a partida estourar o orçamento.
+    local rc=0
+    ( cd "${DIR_ROOT}" && PYTHONHASHSEED=0 timeout -k 10s "${orcamento}s" "${ENGINE_BIN}" "${comandos_protegidos[@]}" ) || rc=$?
 
+    if [[ ${rc} -eq 124 || ${rc} -eq 137 ]]; then
+        echo -e "${TAG_ERRO} Vigia da partida: a partida excedeu o orcamento de ${orcamento}s e a engine foi encerrada."
+        rm -f "${DIR_ROOT}/match_frames.json"
+        return 0
+    fi
     echo -e "${TAG_OK} Simulacao encerrada pela Engine Central."
 }
 

@@ -52,6 +52,7 @@ namespace Config {
     constexpr double ARENA_HEIGHT = 1000.0;
     constexpr int    MAX_TICKS = 1500;
     constexpr double TICK_DT = 0.1;           // 10 Hz (0.1s por tick)
+    constexpr double EPS_TEMPO = 1e-9;        // resíduo de ponto flutuante dos temporizadores (ver descontarTick)
     constexpr int    MAX_BOTS_PADRAO = 20;    // limite do evento; TOPCOM_MAX_BOTS sobrepõe (benchmark)
     constexpr int    RESPOSTA_MS = 50;        // prazo de resposta por tick (20 ticks sem resposta = eliminado)
     constexpr int    PARTIDA_INICIO_MS = 5000;// prazo do tick 0 para todos os bots terminarem de iniciar
@@ -111,6 +112,15 @@ namespace Math2D {
 
     double deg2rad(double deg) { return deg * M_PI / 180.0; }
     double rad2deg(double rad) { return rad * 180.0 / M_PI; }
+
+    // Desconta um tick (TICK_DT) de um temporizador em segundos e zera o resíduo de
+    // ponto flutuante: sem isso, 50 x (-0.1) a partir de 5.0 deixa ~1e-15 > 0 e o
+    // temporizador dura um tick a mais (laser 5,1 s, recarga 1,1 s). Assim, um
+    // temporizador de T segundos dura exatamente T / TICK_DT ticks.
+    void descontarTick(double& t) {
+        t -= Config::TICK_DT;
+        if (t < Config::EPS_TEMPO) t = 0.0;
+    }
 
     // Normaliza ângulos para o intervalo [0.0, 360.0)
     double normalizeAngle(double deg) {
@@ -539,7 +549,10 @@ public:
             } else {
                 h.type = "LASER";
                 h.pos = {Config::ARENA_WIDTH / 2.0, Config::ARENA_HEIGHT / 2.0};
-                h.angle = 0.0;
+                // Ângulo inicial sorteado pelo rng da partida (seed): sem isso o feixe nascia
+                // sempre em 0 graus e queimava sempre o mesmo setor da arena.
+                std::uniform_real_distribution<double> dist_ang(0.0, 360.0);
+                h.angle = dist_ang(rng);
                 h.angular_vel = 30.0; // feixe rotatório
                 h.duration = 5.0;
                 h.timer = 2.5;
@@ -721,7 +734,7 @@ public:
             t.pos.x = std::clamp(t.pos.x, Config::TANK_RADIUS, Config::ARENA_WIDTH - Config::TANK_RADIUS);
             t.pos.y = std::clamp(t.pos.y, Config::TANK_RADIUS, Config::ARENA_HEIGHT - Config::TANK_RADIUS);
 
-            t.cooldown = std::max(0.0, t.cooldown - Config::TICK_DT);
+            if (t.cooldown > 0.0) descontarTick(t.cooldown);
             if (!t.shield_active) {
                 t.energy = std::min(Config::TANK_MAX_ENERGY, t.energy + Config::ENERGY_REGEN * Config::TICK_DT);
             }
@@ -809,8 +822,8 @@ public:
             // LÓGICA DA ARTILHARIA
             // ================================================================
             if (it->type == "ARTILLERY") {
-                it->timer -= Config::TICK_DT;
-                
+                descontarTick(it->timer);
+
                 if (it->timer <= 0.0) {
                     current_events.push_back({"EXPLOSION", it->pos.x, it->pos.y, -1, -1});
                     for (auto& t : tanks) {
@@ -840,11 +853,11 @@ public:
 
                 if (it->timer > 0.0) {
                     // FASE 1: AVISO (Contagem regressiva, não dá dano)
-                    it->timer -= Config::TICK_DT;
-                } 
+                    descontarTick(it->timer);
+                }
                 else if (it->duration > 0.0) {
                     // FASE 2: ATIRANDO (Tempo esgotou, começou a queimar)
-                    it->duration -= Config::TICK_DT;
+                    descontarTick(it->duration);
 
                     double rad = deg2rad(it->angle);
                     Vec2 laser_end = it->pos + Vec2(std::cos(rad), std::sin(rad)) * 1500.0;

@@ -4,9 +4,10 @@
  * Estratégia: sobreviver primeiro. O movimento é a soma de forças (campos de
  * potencial): foge da artilharia e do centro do laser, mantém distância dos
  * adversários, busca cura quando a vida cai e energia quando ela acaba, e volta
- * para o centro quando a zona de radiação fecha (tick > 600). Só atira quando é
- * seguro, com mira antecipada (o projétil anda a 300 u/s) e sem parar de se
- * mover. Liga o escudo com a vida baixa e adversário perto.
+ * para o centro quando a zona de radiação fecha (tick > 600). Anda em zigue-zague
+ * para não ser previsível. Só atira de perto e com reserva de energia, com mira
+ * antecipada (o projétil anda a 300 u/s). Liga o escudo com a vida abaixo de 70
+ * e adversário perto.
  * ============================================================================= */
 
 #include "arena.h"
@@ -109,8 +110,9 @@ Acao pensar(const Estado *e) {
     }
     if (alvo >= 0) {
         a.turret_angle = mira_com_antecipacao(eu, &e->inimigos[alvo]);
-        a.shoot = menor < 550 && eu->cooldown <= 0 && eu->energy >= 30;
-        a.shield = menor < 200 && eu->hp < 50 && eu->energy > 60;
+        /* poupa energia: só atira de perto e mantém reserva para o escudo */
+        a.shoot = menor < 450 && eu->cooldown <= 0 && eu->energy >= 45;
+        a.shield = menor < 250 && eu->hp < 70 && eu->energy > 60;
     }
 
     /* Itens: cura quando a vida cai, energia quando ela acaba */
@@ -149,6 +151,9 @@ Acao pensar(const Estado *e) {
 
     /* Segue a força resultante: gira até a direção (9 graus por tick no máximo) e anda */
     double direcao = (fx == 0.0 && fy == 0.0) ? eu->angle + 30.0 : angulo_para(0.0, 0.0, fx, fy);
+    /* Zigue-zague: balança a direção uns 40 graus a cada ~1,5 s. Quem mira onde o tanque
+     * estará se andasse em linha reta erra o tiro. */
+    direcao += 40.0 * sin(e->tick * 0.4 + eu->id);
     double dif = diferenca_angulo(eu->angle, direcao);
     a.turn = dif / 9.0;
     if (a.turn > 1.0) a.turn = 1.0;

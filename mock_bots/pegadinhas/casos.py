@@ -99,7 +99,8 @@ CASOS = [
     ("java", "import_inexistente", "ERRO DE COMPILACAO", "import foo.Bar;\n\n" + _JAVA_OK),
     # ---- Java: devem passar
     ("java", "classe_auxiliar_antes", "YES",
-     "class Ajuda {\n    static double dobro(double x) { return 2 * x; }\n}\n\n" + _JAVA_OK),
+     _JAVA_IMPORTS + "class Ajuda {\n    static double dobro(double x) { return 2 * x; }\n}\n\n"
+     + _JAVA_OK[len(_JAVA_IMPORTS):]),
     ("java", "comentario_class_principal", "YES", "// class principal do bot\n" + _JAVA_OK),
     ("java", "sem_classe_publica", "YES", _JAVA_OK.replace("public class Solution", "class Solution")),
     ("java", "main_extra", "YES",

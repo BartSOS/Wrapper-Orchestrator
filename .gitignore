@@ -13,6 +13,7 @@ bin/
 # Jar gerados (preservando bibliotecas canônicas em libs/)
 *.jar
 !libs/*.jar
+!starter-kit/java/gson.jar
 
 # Caches de interpretadores e linguagens
 __pycache__/

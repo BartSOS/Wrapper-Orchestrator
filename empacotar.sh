@@ -11,8 +11,10 @@
 #
 # Uso:
 #   bash empacotar.sh --saida DIR [--engine] [--linguagens]   (sem as duas opções: gera ambos)
-#   bash empacotar.sh --sincronizar-kit     copia arena.h, json.hpp e gson.jar para starter-kit/
-#   bash empacotar.sh --conferir-kit        confere se starter-kit/ tem as mesmas cópias (código 1 se não)
+#   bash empacotar.sh --sincronizar-kit     copia arena.h, json.hpp e gson.jar para o starter kit
+#   bash empacotar.sh --conferir-kit        confere se o starter kit tem as mesmas cópias (código 1 se não)
+# O starter kit é o repositório Starter-Kit-Game-Jam, ao lado deste: GAMEJAM_KIT_DIR
+# (padrão ../Starter-Kit-Game-Jam, relativo à raiz do battle-orchestrator).
 #
 # Quem chama: gerenciar_engine.py (--empacotar, --empacotar-linguagens) e o Dockerfile.
 # Requer bash, tar, gzip e python3 (o zip é gerado pela biblioteca padrão do Python).
@@ -38,18 +40,23 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Cópias do kit do participante: origem -> destino (relativos à raiz do battle-orchestrator)
+# Cópias do kit do participante: origem (relativa a esta raiz) -> destino (relativo ao kit)
+KIT_DIR="${GAMEJAM_KIT_DIR:-${RAIZ}/../Starter-Kit-Game-Jam}"
 KIT_COPIAS=(
-    "wrappers/arena.h|starter-kit/c/arena.h"
-    "engine/nlohmann/json.hpp|starter-kit/cpp/nlohmann/json.hpp"
-    "libs/gson-2.10.1.jar|starter-kit/java/gson.jar"
+    "wrappers/arena.h|c/arena.h"
+    "engine/nlohmann/json.hpp|cpp/nlohmann/json.hpp"
+    "libs/gson-2.10.1.jar|java/gson.jar"
 )
+if [[ $FAZER_SINCRONIZAR -eq 1 || $FAZER_CONFERIR -eq 1 ]] && [[ ! -f "${KIT_DIR}/README.md" ]]; then
+    echo "Starter kit nao encontrado em ${KIT_DIR} (clone BartSOS/Starter-Kit-Game-Jam ou defina GAMEJAM_KIT_DIR)" >&2
+    exit 2
+fi
 
 if [[ $FAZER_SINCRONIZAR -eq 1 ]]; then
     for par in "${KIT_COPIAS[@]}"; do
         origem="${par%%|*}"; destino="${par##*|}"
-        mkdir -p "$(dirname "${RAIZ}/${destino}")"
-        cp -- "${RAIZ}/${origem}" "${RAIZ}/${destino}"
+        mkdir -p "$(dirname "${KIT_DIR}/${destino}")"
+        cp -- "${RAIZ}/${origem}" "${KIT_DIR}/${destino}"
         echo "[kit] ${destino} <- ${origem}"
     done
     [[ -n "$SAIDA" || $FAZER_ENGINE -eq 1 || $FAZER_LINGUAGENS -eq 1 || $FAZER_CONFERIR -eq 1 ]] || exit 0
@@ -59,7 +66,7 @@ if [[ $FAZER_CONFERIR -eq 1 ]]; then
     divergentes=0
     for par in "${KIT_COPIAS[@]}"; do
         origem="${par%%|*}"; destino="${par##*|}"
-        if cmp -s -- "${RAIZ}/${origem}" "${RAIZ}/${destino}"; then
+        if cmp -s -- "${RAIZ}/${origem}" "${KIT_DIR}/${destino}"; then
             echo "[kit] OK        ${destino}"
         else
             echo "[kit] DIVERGE   ${destino} (rode: bash empacotar.sh --sincronizar-kit)" >&2

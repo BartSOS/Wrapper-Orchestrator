@@ -6,7 +6,7 @@ e --paridade). Para virar arquivos soltos (ex.: submeter pelo BOCA): testar_kits
 Cada caso: (linguagem, nome do caso, esperado, código)
   linguagem  c | cpp | java | py
   esperado   "YES" (o validador deve aprovar) ou um trecho que deve aparecer na mensagem do
-             Compilation Error (as mensagens estão no starter-kit/ERROS_VALIDADOR.md)
+             Compilation Error (as mensagens estão no ERROS_VALIDADOR.md do repositório Starter-Kit-Game-Jam)
 """
 
 # ------------------------------------------------------------------------------ C

@@ -8,7 +8,7 @@ O módulo é **autônomo**: roda igual na linha de comando (fora do BOCA) e dent
 códigos das equipes ──▶ wrappers + compilação ──▶ Engine C++ (até 1500 ticks) ──▶ match_frames.json ──▶ Unity (build Linux)
 ```
 
-Documentos para as equipes: o enunciado do Desafio (fonte em `Boca-Game-Jam-Pet/desafio/enunciado/`) e o starter kit (`starter-kit/`, com o `README.md` que vai no zip).
+Documentos para as equipes: o enunciado do Desafio (fonte em `Boca-Game-Jam-Pet/desafio/enunciado/`) e o starter kit, que tem repositório próprio (`BartSOS/Starter-Kit-Game-Jam`, no workspace em `Starter-Kit-Game-Jam/`, ao lado deste).
 
 ---
 
@@ -76,9 +76,9 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já in
 
 Apenas a função `pensar(estado)`, chamada a cada tick. O competidor **não** escreve `main()`, não lê `stdin` e não faz parsing de JSON: os wrappers fazem isso.
 
-O ponto de partida da equipe é o `starter-kit/` (`c/bot.c` + `arena.h`, `cpp/bot.cpp` + `nlohmann/json.hpp`, `java/MeuBot.java` + `gson.jar`, `python/bot.py` e o `README.md`). Cada arquivo traz uma seção de **ajudantes** editável (acessores do estado, montador da ação e matemática básica), descrita em `starter-kit/AJUDANTES.md` (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`).
+O ponto de partida da equipe é o starter kit, no repositório `Starter-Kit-Game-Jam` (`c/bot.c` + `arena.h`, `cpp/bot.cpp` + `nlohmann/json.hpp`, `java/MeuBot.java` + `gson.jar`, `python/bot.py` e o `README.md`). Cada arquivo traz uma seção de **ajudantes** editável (acessores do estado, montador da ação e matemática básica), descrita no `AJUDANTES.md` do kit (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`). O `arena.h`, o `json.hpp` e o `gson.jar` do kit são cópias dos daqui: `bash empacotar.sh --conferir-kit` / `--sincronizar-kit`.
 
-O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, então só dá YES ao código que compila exatamente como na partida. `main()` próprio (C/C++), `package` em Java, import relativo, bloco `if __name__ == "__main__":` ou biblioteca fora da padrão em Python dão Compilation Error. O texto exato de cada mensagem (`ERRO DE VALIDACAO: ...` / `ERRO DE COMPILACAO: ...`) está em `starter-kit/ERROS_VALIDADOR.md` (contrato C-K3, fora do zip).
+O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, então só dá YES ao código que compila exatamente como na partida. `main()` próprio (C/C++), `package` em Java, import relativo, bloco `if __name__ == "__main__":` ou biblioteca fora da padrão em Python dão Compilation Error. O texto exato de cada mensagem (`ERRO DE VALIDACAO: ...` / `ERRO DE COMPILACAO: ...`) está no `ERROS_VALIDADOR.md` do kit (contrato C-K3, fora do zip).
 
 ### Entrada — `estado`
 
@@ -211,7 +211,6 @@ battle-orchestrator/
 │   ├── bots-base/         # Conjunto canônico de bots de exemplo (testes, benchmark e checkpoint inicial)
 │   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c)
 │   └── malicious_bots/    # fork_bomb, infinite_memory, file_system_hacker, system_call.c
-├── starter-kit/           # Kit das equipes: c/, cpp/, java/, python/ + README.md (zip via boca-desafio); AJUDANTES.md e ERROS_VALIDADOR.md ficam fora do zip
 ├── submissoes/            # Entrada da partida (conteúdo ignorado pelo git)
 └── build/, replays/       # Saídas geradas (ignoradas pelo git): build/engine, build/wrappers/, build/bots/, build/logs/
 ```

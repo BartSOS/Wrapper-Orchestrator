@@ -46,6 +46,15 @@ KIT_COPIAS=(
     "wrappers/arena.h|c/arena.h"
     "engine/nlohmann/json.hpp|cpp/nlohmann/json.hpp"
     "libs/gson-2.10.1.jar|java/gson.jar"
+    # verificar.py do kit: a mesma montagem e as mesmas checagens da partida
+    "wrappers/build_bot.sh|verificador/build_bot.sh"
+    "wrappers/checar_fonte.py|verificador/checar_fonte.py"
+    "wrappers/checar_python.py|verificador/checar_python.py"
+    "wrappers/wrapper.py|verificador/wrapper.py"
+    "wrappers/wrapper.java|verificador/wrapper.java"
+    "wrappers/cpp_header.hpp|verificador/cpp_header.hpp"
+    "wrappers/cpp_footer.cpp|verificador/cpp_footer.cpp"
+    "wrappers/c_wrapper.cpp|verificador/c_wrapper.cpp"
 )
 if [[ $FAZER_SINCRONIZAR -eq 1 || $FAZER_CONFERIR -eq 1 ]] && [[ ! -f "${KIT_DIR}/README.md" ]]; then
     echo "Starter kit nao encontrado em ${KIT_DIR} (clone BartSOS/Starter-Kit-Game-Jam ou defina GAMEJAM_KIT_DIR)" >&2

@@ -144,6 +144,30 @@ namespace Math2D {
 }
 using namespace Math2D;
 
+// Leitura tolerante da ação do bot: um campo com tipo errado perde só aquele campo (vale o
+// padrão), e não o tick inteiro. Antes, "shoot": 1 lançava type_error e a ação toda era ignorada.
+namespace AcaoBot {
+    // Número finito (int ou double); bool, string, null, NaN e infinito dão o padrão
+    double lerNumero(const json& j, const char* campo, double padrao) {
+        auto it = j.find(campo);
+        if (it == j.end() || !it->is_number()) return padrao;
+        double v = it->get<double>();
+        return std::isfinite(v) ? v : padrao;
+    }
+
+    // Bool ou número (diferente de 0 = verdadeiro); o resto dá o padrão
+    bool lerBool(const json& j, const char* campo, bool padrao) {
+        auto it = j.find(campo);
+        if (it == j.end()) return padrao;
+        if (it->is_boolean()) return it->get<bool>();
+        if (it->is_number()) {
+            double v = it->get<double>();
+            return std::isfinite(v) ? v != 0.0 : padrao;
+        }
+        return padrao;
+    }
+}
+
 // ============================================================================
 // 3. COMUNICAÇÃO IPC E SUBPROCESSOS POSIX
 // ============================================================================
@@ -180,18 +204,19 @@ private:
         return true;
     }
 
-    // Próximo objeto JSON vindo do bot até o prazo; descarta linhas que não são objeto JSON
+    // Próxima resposta do bot até o prazo. Toda linha não vazia é a resposta do tick: se não
+    // for um objeto JSON (null, lista, NaN, texto), vale como ação vazia {}. Descartá-la deixaria
+    // a engine esperando uma resposta que nunca vem, e o bot seria eliminado 20 ticks depois.
     bool lerObjeto(json& out, Relogio::time_point prazo) {
         while (true) {
             size_t pos;
             while ((pos = read_buffer.find('\n')) != std::string::npos) {
                 std::string linha = read_buffer.substr(0, pos);
                 read_buffer.erase(0, pos + 1);
+                if (linha.find_first_not_of(" \t\r") == std::string::npos) continue;
                 json j = json::parse(linha, nullptr, false);
-                if (!j.is_discarded() && j.is_object()) {
-                    out = std::move(j);
-                    return true;
-                }
+                out = (!j.is_discarded() && j.is_object()) ? std::move(j) : json::object();
+                return true;
             }
 
             auto agora = Relogio::now();
@@ -657,11 +682,12 @@ public:
                 tank.consecutive_timeouts = 0;
                 try {
                     // --- CLAMPING RIGOROSO ANTICHEATING ---
-                    double throttle = std::clamp(res.value("throttle", 0.0), -1.0, 1.0);
-                    double turn = std::clamp(res.value("turn", 0.0), -1.0, 1.0);
-                    double turret = normalizeAngle(res.value("turret_angle", tank.turret_angle));
-                    bool shoot = res.value("shoot", false);
-                    bool shield = res.value("shield", false);
+                    // Campo ausente ou com tipo errado vale o padrão (só ele, não a ação inteira)
+                    double throttle = std::clamp(AcaoBot::lerNumero(res, "throttle", 0.0), -1.0, 1.0);
+                    double turn = std::clamp(AcaoBot::lerNumero(res, "turn", 0.0), -1.0, 1.0);
+                    double turret = normalizeAngle(AcaoBot::lerNumero(res, "turret_angle", tank.turret_angle));
+                    bool shoot = AcaoBot::lerBool(res, "shoot", false);
+                    bool shield = AcaoBot::lerBool(res, "shield", false);
 
                     // Atualização cinemática de rotação e aceleração
                     tank.angle = normalizeAngle(tank.angle + turn * Config::TANK_TURN_RATE * Config::TICK_DT);

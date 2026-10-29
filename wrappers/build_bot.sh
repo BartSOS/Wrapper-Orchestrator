@@ -258,7 +258,13 @@ case "$EXT" in
         # Análise estática pela AST (sem executar o código): sintaxe, pensar(estado), imports e afins.
         python3 -I "${DIR_WRAPPERS}/checar_python.py" "${SOURCE_FILE}" || exit 1
         WRAPPER_FILE="${DIR_WRAPPERS}/wrapper.py"
-        cat "${SOURCE_FILE}" "${WRAPPER_FILE}" > "${EXE_FILE}"
+        # O código da equipe vai embutido (base64) e só roda depois que o wrapper protege
+        # a saída: um print no nível do arquivo não chega mais à engine.
+        {
+            echo '#!/usr/bin/env python3'
+            printf '_FONTE_DA_EQUIPE = "%s"\n' "$(base64 -w0 < "${SOURCE_FILE}")"
+            cat "${WRAPPER_FILE}"
+        } > "${EXE_FILE}"
         chmod +x "${EXE_FILE}"
         ;;
 

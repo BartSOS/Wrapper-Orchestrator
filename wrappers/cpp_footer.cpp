@@ -14,17 +14,24 @@ int main() {
     FILE* canal = fdopen(fd_canal, "w");
     if (!canal) return 1;
 
+    // Toda linha de estado recebe exatamente uma resposta: se o pensar() lançar qualquer
+    // exceção, a resposta é a ação vazia {} (sem isso a engine esperaria a resposta que
+    // não veio, e o bot seria eliminado 20 ticks depois).
     std::string linha;
     while (std::getline(std::cin, linha)) {
         if (linha.empty()) continue;
+        std::string resposta = "{}";
         try {
             json estado_arena = json::parse(linha);
             json comando_saida = pensar(estado_arena);
-            std::fprintf(canal, "%s\n", comando_saida.dump().c_str());
-            std::fflush(canal);
+            resposta = comando_saida.dump();
         } catch (const std::exception& e) {
-            std::cerr << "[ERRO NO BOT C++]: " << e.what() << std::endl;
+            std::cerr << "[ERRO NO BOT C++]: " << e.what() << " (acao deste tick: {})" << std::endl;
+        } catch (...) {
+            std::cerr << "[ERRO NO BOT C++]: excecao desconhecida (acao deste tick: {})" << std::endl;
         }
+        std::fprintf(canal, "%s\n", resposta.c_str());
+        std::fflush(canal);
         std::cout.flush();
     }
     return 0;

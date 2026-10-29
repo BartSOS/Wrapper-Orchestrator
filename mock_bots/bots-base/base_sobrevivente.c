@@ -1,13 +1,14 @@
 /* =============================================================================
  * NPC "sobrevivente" - nível DIFÍCIL (C99)
  * =============================================================================
- * Estratégia: sobreviver primeiro. O movimento é a soma de forças (campos de
- * potencial): foge da artilharia e do centro do laser, mantém distância dos
- * adversários, busca cura quando a vida cai e energia quando ela acaba, e volta
- * para o centro quando a zona de radiação fecha (tick > 600). Anda em zigue-zague
- * para não ser previsível. Só atira de perto e com reserva de energia, com mira
- * antecipada (o projétil anda a 300 u/s). Liga o escudo com a vida abaixo de 70
- * e adversário perto.
+ * Estratégia: luta à distância sem se deixar encurralar (kiting). Recua quando o
+ * adversário mais próximo chega a menos de 300 (atirando de costas: a torre gira
+ * na hora), aproxima quando ele passa de 500 e, no meio-termo, circula trocando
+ * o sentido da volta em intervalos irregulares, para não ser previsível. Atira
+ * sempre que pode, com mira antecipada (o projétil anda a 300 u/s), e guarda
+ * energia para o escudo só quando a vida está baixa. Busca cura e energia
+ * próximas quando precisa, volta para dentro da zona segura antes de ela fechar
+ * (prevê o raio 4 s à frente) e foge da artilharia e do centro quando há laser.
  * ============================================================================= */
 
 #include "arena.h"
@@ -57,11 +58,25 @@ static inline double diferenca_angulo(double de, double para) {
  * ----------------------------------------------------------------------------- */
 
 #define VELOCIDADE_PROJETIL 300.0   /* unidades por segundo */
+#define CENTRO              500.0   /* centro da arena (1000 x 1000) */
 
-/* Soma ao vetor (fx, fy) um empurrão de intensidade 'peso' na direção 'angulo' (graus) */
-static void empurrar(double *fx, double *fy, double angulo, double peso) {
-    *fx += cos(angulo * M_PI / 180.0) * peso;
-    *fy += sin(angulo * M_PI / 180.0) * peso;
+/* Raio da zona segura no tick dado: fecha 0,7 por tick a partir do tick 600, até 80 */
+static double raio_seguro(int tick) {
+    double r = tick > 600 ? 550.0 - (tick - 600) * 0.7 : 550.0;
+    return r < 80.0 ? 80.0 : r;
+}
+
+/* Sentido da volta em torno do alvo (+1 ou -1): troca em intervalos de 1,2 a 3,3 s,
+ * sorteados por um embaralhamento simples do número do bloco (difícil de prever) */
+static double sentido_da_volta(int tick, int id) {
+    unsigned bloco = 0, inicio = 0;
+    for (;;) {
+        unsigned h = (bloco + 1u) * 2654435761u ^ (unsigned)id * 40503u;
+        unsigned tamanho = 12u + (h >> 7) % 22u;   /* 12 a 33 ticks */
+        if ((unsigned)tick < inicio + tamanho) return (h & 1u) ? 1.0 : -1.0;
+        inicio += tamanho;
+        bloco++;
+    }
 }
 
 /* Direção da torre para acertar um adversário em movimento: resolve o instante t
@@ -88,76 +103,77 @@ static double mira_com_antecipacao(const Tanque *meu, const Inimigo *alvo) {
     return angulo_para(meu->x, meu->y, alvo->x + alvo->vx * t, alvo->y + alvo->vy * t);
 }
 
+/* Perto da parede (folga em unidades): recuar para lá encurralaria o tanque */
+static int perto_da_borda(const Tanque *eu, double folga) {
+    return eu->x < folga || eu->x > 1000.0 - folga || eu->y < folga || eu->y > 1000.0 - folga;
+}
+
 Acao pensar(const Estado *e) {
     const Tanque *eu = &e->self;
     Acao a = {0};
     a.turret_angle = eu->turret_angle;
-    double fx = 0.0, fy = 0.0;
 
-    /* Adversários: o mais próximo vira alvo; todos empurram para longe quando estão perto */
+    /* Sem adversários: volta para o centro */
+    double direcao = angulo_para(eu->x, eu->y, CENTRO, CENTRO);
     int alvo = -1;
     double menor = 1e9;
     for (int i = 0; i < e->n_inimigos; i++) {
-        const Inimigo *in = &e->inimigos[i];
-        double d = distancia(eu->x, eu->y, in->x, in->y);
+        double d = distancia(eu->x, eu->y, e->inimigos[i].x, e->inimigos[i].y);
         if (d < menor) {
             menor = d;
             alvo = i;
         }
-        if (d < 300) {
-            empurrar(&fx, &fy, angulo_para(in->x, in->y, eu->x, eu->y), (300 - d) / 100.0);
-        }
-    }
-    if (alvo >= 0) {
-        a.turret_angle = mira_com_antecipacao(eu, &e->inimigos[alvo]);
-        /* poupa energia: só atira de perto e mantém reserva para o escudo */
-        a.shoot = menor < 450 && eu->cooldown <= 0 && eu->energy >= 45;
-        a.shield = menor < 250 && eu->hp < 70 && eu->energy > 60;
     }
 
-    /* Itens: cura quando a vida cai, energia quando ela acaba */
+    if (alvo >= 0) {
+        const Inimigo *in = &e->inimigos[alvo];
+        double para_o_alvo = angulo_para(eu->x, eu->y, in->x, in->y);
+        /* Distância: recua quando ele chega perto, aproxima quando está longe e, no
+         * meio-termo, circula trocando o sentido em intervalos irregulares */
+        if (menor < 300.0 && !perto_da_borda(eu, 100.0)) direcao = para_o_alvo + 180.0;
+        else if (menor > 500.0) direcao = para_o_alvo;
+        else direcao = para_o_alvo + 90.0 * sentido_da_volta(e->tick, eu->id);
+
+        /* Atira sempre que pode, com mira antecipada; com a vida baixa, guarda energia
+         * para o escudo (só liga acima de 50 e gasta 50 por segundo) */
+        double reserva = (eu->hp <= 50.0 && !eu->shield) ? 60.0 : 20.0;
+        a.turret_angle = mira_com_antecipacao(eu, in);
+        a.shoot = menor < 550.0 && eu->cooldown <= 0.0 && eu->energy >= reserva;
+        a.shield = eu->shield ? (menor < 200.0 && eu->energy > 15.0)
+                              : (eu->hp <= 50.0 && menor < 150.0 && eu->energy > 55.0);
+    }
+
+    /* Itens próximos: cura com a vida baixa, energia com a energia baixa */
+    double melhor_item = 1e9;
     for (int i = 0; i < e->n_itens; i++) {
         const Item *it = &e->itens[i];
-        int quero = (it->tipo == ITEM_CURA && eu->hp < 80) || (it->tipo == ITEM_ENERGIA && eu->energy < 60);
+        int quero = (it->tipo == ITEM_CURA && eu->hp < 60.0) || (it->tipo == ITEM_ENERGIA && eu->energy < 40.0);
         double d = distancia(eu->x, eu->y, it->x, it->y);
-        if (quero && d < 400) {
-            empurrar(&fx, &fy, angulo_para(eu->x, eu->y, it->x, it->y), 2.0);
+        if (quero && d < 250.0 && d < melhor_item) {
+            melhor_item = d;
+            direcao = angulo_para(eu->x, eu->y, it->x, it->y);
         }
     }
 
-    /* Perigos: artilharia (raio + folga) e centro do laser */
+    /* Zona: depois do tick 600 volta para dentro antes de ela fechar (raio previsto 4 s à frente) */
+    double do_centro = distancia(eu->x, eu->y, CENTRO, CENTRO);
+    if (do_centro > raio_seguro(e->tick + 40) - 40.0) direcao = angulo_para(eu->x, eu->y, CENTRO, CENTRO);
+
+    /* Perigos (prioridade máxima): sai do raio da artilharia e do centro quando há laser */
     for (int i = 0; i < e->n_hazards; i++) {
         const Hazard *h = &e->hazards[i];
-        double d = distancia(eu->x, eu->y, h->x, h->y);
-        double fugir = angulo_para(h->x, h->y, eu->x, eu->y);
-        if (h->tipo == HAZARD_ARTILHARIA && d < h->radius + 70) empurrar(&fx, &fy, fugir, 5.0);
-        if (h->tipo == HAZARD_LASER && d < 180) empurrar(&fx, &fy, fugir, 3.0);
+        if (h->tipo == HAZARD_ARTILHARIA && distancia(eu->x, eu->y, h->x, h->y) < h->radius + 40.0) {
+            direcao = angulo_para(h->x, h->y, eu->x, eu->y);
+            break;
+        }
+        if (h->tipo == HAZARD_LASER && do_centro < 120.0) direcao = angulo_para(CENTRO, CENTRO, eu->x, eu->y);
     }
 
-    /* Zona de radiação: depois do tick 600 o raio seguro encolhe a partir do centro */
-    double raio_seguro = e->tick > 600 ? 550.0 - (e->tick - 600) * 0.7 : 550.0;
-    if (raio_seguro < 80.0) raio_seguro = 80.0;
-    double do_centro = distancia(eu->x, eu->y, 500.0, 500.0);
-    if (do_centro > raio_seguro - 100.0) {
-        empurrar(&fx, &fy, angulo_para(eu->x, eu->y, 500.0, 500.0), 4.0);
-    }
-    /* Ronda o centro a uns 300 de distância (o laser nasce no centro), trocando o sentido
-     * da volta a cada 3 s: andar sempre do mesmo jeito deixa o adversário acertar. */
-    double para_o_centro = angulo_para(eu->x, eu->y, 500.0, 500.0);
-    double sentido = (e->tick / 30) % 2 == 0 ? 90.0 : -90.0;
-    if (do_centro > 360.0) empurrar(&fx, &fy, para_o_centro, 1.0);
-    else if (do_centro < 240.0) empurrar(&fx, &fy, para_o_centro + 180.0, 1.0);
-    else empurrar(&fx, &fy, para_o_centro + sentido, 1.0);
-
-    /* Segue a força resultante: gira até a direção (9 graus por tick no máximo) e anda */
-    double direcao = (fx == 0.0 && fy == 0.0) ? eu->angle + 30.0 : angulo_para(0.0, 0.0, fx, fy);
-    /* Zigue-zague: balança a direção uns 40 graus a cada ~1,5 s. Quem mira onde o tanque
-     * estará se andasse em linha reta erra o tiro. */
-    direcao += 40.0 * sin(e->tick * 0.4 + eu->id);
+    /* Segue a direção escolhida na velocidade máxima */
     double dif = diferenca_angulo(eu->angle, direcao);
-    a.turn = dif / 9.0;
+    a.turn = dif / 9.0;   /* o chassi gira no máximo 9 graus por tick */
     if (a.turn > 1.0) a.turn = 1.0;
     if (a.turn < -1.0) a.turn = -1.0;
-    a.throttle = fabs(dif) < 60 ? 1.0 : 0.2;
+    a.throttle = 1.0;
     return a;
 }

@@ -203,10 +203,9 @@ battle-orchestrator/
 ├── engine/                # main.cpp (física/juiz) + nlohmann/json.hpp
 ├── wrappers/              # build_bot.sh, wrapper.py, wrapper.java, cpp_header.hpp, cpp_footer.cpp, wrapper.cpp, arena.h (contrato C), c_wrapper.cpp (I/O dos bots C)
 ├── libs/                  # gson-2.10.1.jar
+├── empacotar.sh           # Fonte única do engine.zip e dos pacotes de linguagem; copia os arquivos do kit (KIT_COPIAS)
 ├── boca-plugin/           # Validadores de linguagem para o BOCA
-│   ├── linguagens/{c,cpp,java,python3}/compile.sh
-│   ├── empacotar_pro_boca.sh
-│   └── out_boca_packages/ # .tgz gerados (ignorados pelo git)
+│   └── linguagens/{c,cpp,java,python3}/compile.sh
 ├── mock_bots/
 │   ├── bots-base/         # Conjunto canônico de bots de exemplo (testes, benchmark e checkpoint inicial)
 │   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c)
@@ -262,9 +261,9 @@ O pacote leva `script.sh`, `engine/`, `wrappers/` e `libs/` e é gravado em `Boc
 
 ### Gerar os validadores de linguagem (`.tgz`) para o BOCA
 ```bash
-cd boca-plugin && ./empacotar_pro_boca.sh
+python3 ../.claude/skills/boca-gerenciar-engine/scripts/gerenciar_engine.py --empacotar-linguagens
 ```
-Os `.tgz` de `out_boca_packages/` são instalados em `private/languages/` (pela aba **Languages** do admin).
+Gera os pacotes com o `empacotar.sh` e grava em `Boca-Game-Jam-Pet/boca-master/src/private/languages/` (o `.tgz` e a pasta extraída de cada linguagem). Depois, rode `sync_and_test.py`. Na imagem, o build faz o mesmo (`empacotar.sh --saida`).
 
 ---
 

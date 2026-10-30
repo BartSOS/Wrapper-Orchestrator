@@ -25,10 +25,6 @@ replays/
 match_frames.json
 resultado_partida.json
 
-# Pacotes exportados para o BOCA (gerados via empacotar_pro_boca.sh)
-boca-plugin/out_boca_packages/
-out_boca_packages/
-
 # Submissões dinâmicas (alimentadas em runtime pelo BOCA ou testes)
 submissoes/*
 !submissoes/.gitkeep

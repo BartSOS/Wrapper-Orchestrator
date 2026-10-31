@@ -1,0 +1,20 @@
+{
+  "id": "91_sem_zona_engine",
+  "ordem": 91,
+  "bloco": "sobrevivencia",
+  "titulo": "Exemplo da engine: 700 ticks sem zona, laser nem artilharia",
+  "conceito": "teste do modo cenario (frente engine); nao e uma fase do evento",
+  "texto": "Cenario de teste da engine: parado num canto por 700 ticks. Sem zona, a vida nao cai.",
+  "dicas": [],
+  "ajudantes": [],
+  "cenario": {
+    "max_ticks": 700,
+    "jogador": {"x": 40, "y": 40, "angulo": 45, "hp": 80, "energia": 50},
+    "artilharia": [],
+    "laser": false,
+    "itens": [ {"tipo": "HEAL", "x": 300, "y": 300}, {"tipo": "ENERGY", "x": 700, "y": 700} ],
+    "zona": false
+  },
+  "objetivos": [ {"tipo": "sobreviver", "ate_tick": 700} ],
+  "estrelas": []
+}

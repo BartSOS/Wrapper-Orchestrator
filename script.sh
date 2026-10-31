@@ -8,7 +8,16 @@
 #   TOPCOM_SEED           seed da partida (0 a 4294967295); sem ela, a engine sorteia e registra
 #   TOPCOM_MAX_BOTS       limite de bots na partida (padrão 20)
 #   TOPCOM_COMPILE_JOBS   compilações simultâneas (padrão: min(nproc, memória disponível / 500 MB))
+#   TOPCOM_FASE           (fases de treino) caminho do JSON da fase: liga o modo fase
+#   TOPCOM_FASE_SEED      (fases de treino) seed do sorteio do cenário (0 a 4294967295)
 # Saída: match_frames.json e replays/partida_<id>.json (seed, bots[], excluidos[], frames)
+#
+# Modo fase (TOPCOM_FASE definida): só 1 bot joga (o primeiro em ordem alfabética), a engine
+# recebe --fase <JSON> --fase-seed <N>, o match_frames.json ganha o bloco "fase" (cenário
+# sorteado) e, depois da partida, build/avaliar_fase <fase.json> match_frames.json grava
+# resultado_fase.json. Se DIR_ENTRADA tiver uma subpasta submissoes/, os bots vêm dela e o
+# resultado_fase.json vai para DIR_ENTRADA; senão os bots vêm de DIR_ENTRADA e o resultado
+# fica ao lado do match_frames.json (raiz do orquestrador). Sem TOPCOM_FASE nada muda.
 # ==============================================================================
 
 set -euo pipefail
@@ -62,6 +71,31 @@ MAX_BOTS="${TOPCOM_MAX_BOTS:-20}"
 if ! [[ "${MAX_BOTS}" =~ ^[0-9]+$ ]] || [[ "${MAX_BOTS}" -lt 1 ]]; then
     echo "[AVISO] TOPCOM_MAX_BOTS invalido ('${MAX_BOTS}'); usando 20."
     MAX_BOTS=20
+fi
+
+# --- Modo fase (fases de treino): 1 bot, cenário do arquivo da fase, avaliação no fim ---
+AVALIAR_SRC="${DIR_ROOT}/engine/avaliar_fase.cpp"
+AVALIAR_BIN="${DIR_BUILD}/avaliar_fase"
+AVALIAR_ASSINATURA="${DIR_BUILD}/avaliar_fase.assinatura"
+AVALIAR_PRONTO=0
+FASE_ARQ="${TOPCOM_FASE:-}"
+FASE_SEED="${TOPCOM_FASE_SEED:-}"
+DIR_RESULTADO_FASE="${DIR_ROOT}"
+ARGS_FASE=()
+if [[ -n "${FASE_ARQ}" ]]; then
+    if [[ ! -f "${FASE_ARQ}" ]]; then
+        echo "[ERRO] TOPCOM_FASE: arquivo da fase nao encontrado: ${FASE_ARQ}"
+        exit 1
+    fi
+    # A engine roda na raiz do orquestrador: o caminho precisa ser absoluto
+    FASE_ARQ="$(cd "$(dirname "${FASE_ARQ}")" && pwd)/$(basename "${FASE_ARQ}")"
+    if [[ -d "${DIR_INPUT}/submissoes" ]]; then
+        DIR_RESULTADO_FASE="$(cd "${DIR_INPUT}" && pwd)"
+        DIR_INPUT="${DIR_INPUT}/submissoes"
+    fi
+    MAX_BOTS=1
+    ARGS_FASE=(--fase "${FASE_ARQ}")
+    [[ -n "${FASE_SEED}" ]] && ARGS_FASE+=(--fase-seed "${FASE_SEED}")
 fi
 
 # --- Paleta de Cores ANSI e Tags Padronizadas (Sem Emojis) ---
@@ -340,6 +374,12 @@ compilar_engine_bin() {
         && mv -f "${ENGINE_BIN}.tmp" "${ENGINE_BIN}"
 }
 
+# Modo fase: avaliador da fase (engine/avaliar_fase.cpp), com as mesmas flags da engine
+compilar_avaliar_bin() {
+    g++ "${ENGINE_FLAGS[@]}" -I"${DIR_ROOT}" -I"${DIR_ROOT}/engine" "${AVALIAR_SRC}" -o "${AVALIAR_BIN}.tmp" \
+        && mv -f "${AVALIAR_BIN}.tmp" "${AVALIAR_BIN}"
+}
+
 compilar_engine() {
     echo -e "${COR_AZUL}[3/6] Compilando Engine Central TopCom (C++) e wrappers pre-compilados...${COR_RESET}"
     mkdir -p "${DIR_BUILD}" "${DIR_BOTS_BUILD}" "${DIR_REPLAYS}"
@@ -370,6 +410,23 @@ compilar_engine() {
         pool_rodar "${log_engine}" compilar_engine_bin
     fi
 
+    # Modo fase: o avaliar_fase compila junto com a engine (e é reaproveitado do mesmo jeito)
+    local ass_avaliar="" compilar_avaliar=0 log_avaliar="${DIR_LOGS}/_avaliar_fase.log"
+    if [[ -n "${FASE_ARQ}" ]]; then
+        if [[ ! -f "${AVALIAR_SRC}" ]]; then
+            echo -e "  ${TAG_AVISO} Modo fase: engine/avaliar_fase.cpp ausente; a fase roda sem avaliacao (sem resultado_fase.json)."
+        else
+            ass_avaliar="$( { g++ --version | head -n 1; echo "${ENGINE_FLAGS[*]}"; cat "${AVALIAR_SRC}" "${NLOHMANN_HPP}" 2>/dev/null; } | sha256sum | cut -d' ' -f1 )"
+            if [[ -x "${AVALIAR_BIN}" && "$(cat "${AVALIAR_ASSINATURA}" 2>/dev/null)" == "${ass_avaliar}" ]]; then
+                AVALIAR_PRONTO=1
+            else
+                compilar_avaliar=1
+                rm -f "${AVALIAR_ASSINATURA}"
+                pool_rodar "${log_avaliar}" compilar_avaliar_bin
+            fi
+        fi
+    fi
+
     # Wrappers C/C++ (uma vez por partida; reaproveitados se nada mudou), junto com a engine
     local langs lang
     langs="$(langs_com_wrapper)"
@@ -389,6 +446,20 @@ compilar_engine() {
         echo -e "${TAG_OK} Engine compilada com sucesso em: ${ENGINE_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
     else
         echo -e "${TAG_OK} Engine reaproveitada (fontes, compilador e flags inalterados): ${ENGINE_BIN}"
+    fi
+
+    if [[ ${compilar_avaliar} -eq 1 ]]; then
+        resultado_job "${log_avaliar}"
+        if [[ ${JOB_RC} -eq 0 ]]; then
+            echo "${ass_avaliar}" > "${AVALIAR_ASSINATURA}"
+            AVALIAR_PRONTO=1
+            echo -e "${TAG_OK} Avaliador da fase compilado em: ${AVALIAR_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
+        else
+            echo -e "  ${TAG_AVISO} Falha ao compilar o avaliador da fase; a fase roda sem avaliacao:"
+            grep -i "error" "${log_avaliar}" 2>/dev/null | head -n 5 | sed 's/^/      /' || true
+        fi
+    elif [[ ${AVALIAR_PRONTO} -eq 1 ]]; then
+        echo -e "${TAG_OK} Avaliador da fase reaproveitado: ${AVALIAR_BIN}"
     fi
 
     for lang in ${langs}; do
@@ -612,7 +683,10 @@ executar_batalha() {
 
     echo -e "  ${TAG_INFO} Bots conectados via Pipes IPC: ${#NOMES_BOTS[@]}"
     echo -e "  ${TAG_INFO} Parametros de isolamento: orcamento da partida=${orcamento}s (vigia global), limite por bot=${timeout_bot}s, ulimit_mem=${MEM_LIMIT_KB}KB"
-    if [[ -n "${TOPCOM_SEED:-}" ]]; then
+    if [[ -n "${FASE_ARQ}" ]]; then
+        echo -e "  ${TAG_INFO} Modo fase: $(basename "${FASE_ARQ}") (TOPCOM_FASE_SEED=${FASE_SEED:-sorteada})"
+        rm -f "${DIR_RESULTADO_FASE}/resultado_fase.json"
+    elif [[ -n "${TOPCOM_SEED:-}" ]]; then
         echo -e "  ${TAG_INFO} Seed solicitada: TOPCOM_SEED=${TOPCOM_SEED}"
     else
         echo -e "  ${TAG_INFO} Seed: sorteada pela engine (defina TOPCOM_SEED para reproduzir a partida)"
@@ -624,7 +698,13 @@ executar_batalha() {
     rm -f "${DIR_ROOT}/match_frames.json"
     # Vigia global: a engine (e, por ela, os bots) é encerrada se a partida estourar o orçamento.
     local rc=0
-    ( cd "${DIR_ROOT}" && PYTHONHASHSEED=0 timeout -k 10s "${orcamento}s" "${ENGINE_BIN}" "${comandos_protegidos[@]}" ) || rc=$?
+    ( cd "${DIR_ROOT}" && PYTHONHASHSEED=0 timeout -k 10s "${orcamento}s" "${ENGINE_BIN}" ${ARGS_FASE[@]+"${ARGS_FASE[@]}"} "${comandos_protegidos[@]}" ) || rc=$?
+
+    if [[ -n "${FASE_ARQ}" && ${rc} -eq 2 ]]; then
+        echo -e "${TAG_ERRO} Modo fase: a engine recusou o arquivo da fase (cenario invalido; veja a mensagem acima)."
+        rm -f "${DIR_ROOT}/match_frames.json"
+        return 0
+    fi
 
     if [[ ${rc} -eq 124 || ${rc} -eq 137 ]]; then
         echo -e "${TAG_ERRO} Vigia da partida: a partida excedeu o orcamento de ${orcamento}s e a engine foi encerrada."
@@ -725,7 +805,10 @@ resumo = {
 }
 
 # 3. match_frames.json unificado (resumo + config + frames), gravado de forma atômica
+#    Modo fase: o bloco "fase" da engine (cenário sorteado) vai no topo; no torneio ele não existe.
 resultado_final = {"config": dados.get("config", {}), **resumo, "frames": frames_lista}
+if isinstance(dados.get("fase"), dict):
+    resultado_final = {"fase": dados["fase"], **resultado_final}
 tmp_path = match_frames_path + ".tmp"
 with open(tmp_path, 'w', encoding='utf-8') as f:
     json.dump(resultado_final, f, indent=2, ensure_ascii=False)
@@ -769,6 +852,43 @@ print("\033[1;36m===============================================================
 EOF
 }
 
+# ==============================================================================
+# 7. MODO FASE: AVALIAÇÃO (build/avaliar_fase <fase.json> match_frames.json)
+# ==============================================================================
+avaliar_fase() {
+    [[ -n "${FASE_ARQ}" ]] || return 0
+    echo -e "${COR_AZUL}[fase] Avaliando a fase (resultado_fase.json)...${COR_RESET}"
+    local saida="${DIR_RESULTADO_FASE}/resultado_fase.json"
+    if [[ ${AVALIAR_PRONTO} -ne 1 ]]; then
+        echo -e "  ${TAG_AVISO} Avaliador da fase indisponivel: resultado_fase.json nao gerado."
+        return 0
+    fi
+    if [[ ! -f "${DIR_ROOT}/match_frames.json" ]]; then
+        echo -e "  ${TAG_AVISO} Sem match_frames.json: a fase nao foi avaliada."
+        return 0
+    fi
+    local rc=0 log_avaliar="${DIR_LOGS}/_avaliar_fase_execucao.log"
+    timeout -k 5s 60s "${AVALIAR_BIN}" "${FASE_ARQ}" "${DIR_ROOT}/match_frames.json" > "${saida}.tmp" 2> "${log_avaliar}" || rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+        rm -f "${saida}.tmp"
+        echo -e "  ${TAG_ERRO} avaliar_fase terminou com codigo ${rc}; resultado_fase.json nao gerado:"
+        head -n 5 "${log_avaliar}" 2>/dev/null | sed 's/^/      /' || true
+        return 0
+    fi
+    mv -f "${saida}.tmp" "${saida}"
+    python3 - "${saida}" << 'EOF' || true
+import json, sys
+try:
+    r = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception as e:
+    print(f"  [AVISO] resultado_fase.json ilegivel: {e}")
+    sys.exit(0)
+veredito = "PASSOU" if r.get("passou") else "NAO PASSOU"
+print(f"  Fase {r.get('fase')}: {veredito} | estrelas {r.get('estrelas')} | {r.get('motivo', '')}")
+EOF
+    echo -e "${TAG_OK} Resultado da fase gravado em: ${saida}"
+}
+
 # --- Execução Principal ---
 calcular_jobs
 verificar_dependencias
@@ -778,3 +898,4 @@ compilar_engine
 preparar_bots
 executar_batalha
 exibir_resumo_e_gerar_json
+avaliar_fase

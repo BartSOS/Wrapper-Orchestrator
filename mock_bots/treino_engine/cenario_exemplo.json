@@ -1,0 +1,37 @@
+{
+  "id": "90_exemplo_engine",
+  "ordem": 90,
+  "bloco": "movimento",
+  "titulo": "Exemplo da engine: pontos, alvo e artilharia",
+  "conceito": "teste do modo cenario (frente engine); nao e uma fase do evento",
+  "texto": "Cenario de teste da engine: visite B e depois C, desvie da artilharia e destrua o alvo A1.",
+  "dicas": [],
+  "ajudantes": [],
+  "cenario": {
+    "max_ticks": 400,
+    "jogador": {"x": 150, "y": [300, 700], "angulo": [0, 360], "hp": 100, "energia": 100},
+    "pontos": [
+      {"id": "B", "x": 400, "y": [200, 800], "raio": 25},
+      {"id": "C", "x": [550, 650], "y": 500, "raio": 30}
+    ],
+    "alvos": [
+      {"id": "A1", "x": 850, "y": 500, "hp": 20}
+    ],
+    "artilharia": [
+      {"tick": 30, "x": 500, "y": 500},
+      {"tick": 60, "no_jogador": true, "desvio": [0, 30]},
+      {"tick": [100, 120], "x": 100, "y": [100, 900], "raio": 60}
+    ],
+    "laser": false,
+    "itens": false,
+    "zona": false
+  },
+  "objetivos": [
+    {"tipo": "visitar_em_ordem", "pontos": ["B", "C"], "ate_tick": 300},
+    {"tipo": "acertar_alvos", "alvos": "todos", "ate_tick": 400}
+  ],
+  "estrelas": [
+    {"estrelas": 2, "metrica": "ticks", "max": 300},
+    {"estrelas": 3, "metrica": "ticks", "max": 220}
+  ]
+}

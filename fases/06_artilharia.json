@@ -1,0 +1,47 @@
+{
+  "id": "06_artilharia",
+  "ordem": 6,
+  "bloco": "sobrevivencia",
+  "titulo": "Sobreviver à artilharia",
+  "conceito": "ler os perigos (hazards): o aviso vem antes do impacto",
+  "texto": "A artilharia vai mirar no seu tanque durante 40 segundos (400 ticks). Sobreviva até o fim.\n\nCada bombardeio é avisado antes: ele aparece em estado[\"hazards\"] com type \"ARTILLERY\", o centro (x, y), o raio (80) e o timer, os segundos que faltam para o impacto (começa em 3). Quando o timer chega a 0, quem estiver com o centro a até 100 unidades do centro da explosão (80 do raio mais 20 do tanque) perde 40 de vida.\n\nO alvo do bombardeio é onde o tanque estava no momento do aviso, às vezes um pouco deslocado. Ficar parado é perder 40 de vida a cada bombardeio; três acertos destroem o tanque.\n\nEm 3 segundos o tanque anda 150 unidades: dá tempo de sair, desde que o bot reaja logo ao aviso e não fuja para dentro de outro bombardeio.",
+  "dicas": [
+    "perigos(estado) lista os bombardeios avisados; olhe o x, o y, o radius e o timer de cada um.",
+    "Fuja na direção oposta ao centro da explosão: angulo_para(perigo.x, perigo.y, meu.x, meu.y).",
+    "throttle -1 anda de ré: se o chassi aponta para o perigo, dar ré é mais rápido que girar.",
+    "Quando houver dois perigos, some as direções de fuga ou fuja do que tem o menor timer.",
+    "Cuidado com as paredes: o tanque para nelas. Fugir para o centro da arena costuma ser mais seguro.",
+    "O escudo (shield) reduz o dano da artilharia para um quinto, mas gasta energia rápido; é o plano B."
+  ],
+  "ajudantes": ["eu", "perigos", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "cenario": {
+    "max_ticks": 400,
+    "jogador": {"x": 500, "y": 500, "angulo": [0, 360], "hp": 100, "energia": 100},
+    "pontos": [],
+    "alvos": [],
+    "artilharia": [
+      {"tick": 20, "no_jogador": true, "desvio": [0, 0]},
+      {"tick": 70, "no_jogador": true, "desvio": [0, 30]},
+      {"tick": 115, "no_jogador": true, "desvio": [0, 30]},
+      {"tick": 115, "no_jogador": true, "desvio": [120, 150]},
+      {"tick": 160, "no_jogador": true, "desvio": [0, 40]},
+      {"tick": 200, "no_jogador": true, "desvio": [0, 20]},
+      {"tick": 235, "no_jogador": true, "desvio": [0, 40]},
+      {"tick": 235, "no_jogador": true, "desvio": [120, 150]},
+      {"tick": 275, "no_jogador": true, "desvio": [0, 30]},
+      {"tick": 310, "no_jogador": true, "desvio": [0, 20]},
+      {"tick": 340, "no_jogador": true, "desvio": [0, 40]},
+      {"tick": 340, "no_jogador": true, "desvio": [120, 150]}
+    ],
+    "laser": false,
+    "itens": false,
+    "zona": false
+  },
+  "objetivos": [
+    {"tipo": "sobreviver", "ate_tick": 399}
+  ],
+  "estrelas": [
+    {"estrelas": 2, "metrica": "dano_recebido", "max": 40},
+    {"estrelas": 3, "metrica": "dano_recebido", "max": 0}
+  ]
+}

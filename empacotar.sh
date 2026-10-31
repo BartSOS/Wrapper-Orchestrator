@@ -3,7 +3,7 @@
 # Game Jam PET - Empacotador (fonte única de engine.zip e dos pacotes de linguagem)
 # ==============================================================================
 # Gera, a partir do battle-orchestrator, tudo o que o BOCA instala:
-#   <saida>/engine.zip                    script.sh + engine/ + wrappers/ + libs/
+#   <saida>/engine.zip                    script.sh + engine/ + wrappers/ + libs/ + fases/*.json
 #   <saida>/languages/<ext>.tgz           pacote de validação (c, cpp, java, python3)
 #   <saida>/languages/<ext>/              o mesmo pacote já extraído
 # Os arquivos são determinísticos: rodar de novo sem mudar os fontes gera os mesmos bytes
@@ -120,11 +120,16 @@ import zipfile
 
 raiz, destino = sys.argv[1], sys.argv[2]
 arquivos = ["script.sh"]
-for pasta in ("engine", "wrappers", "libs"):
+# fases/: só os arquivos de fase (fases/<id>.json), que o BOCA lista lendo o engine.zip
+for pasta in ("engine", "wrappers", "libs", "fases"):
     for dirpath, dirnames, nomes in os.walk(os.path.join(raiz, pasta)):
         dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        if pasta == "fases":
+            dirnames[:] = []
         for nome in sorted(nomes):
             if nome.endswith((".pyc", ".gch", ".o")):
+                continue
+            if pasta == "fases" and not nome.endswith(".json"):
                 continue
             arquivos.append(os.path.relpath(os.path.join(dirpath, nome), raiz).replace(os.sep, "/"))
 arquivos = ["script.sh"] + sorted(set(arquivos) - {"script.sh"})

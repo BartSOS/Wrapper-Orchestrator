@@ -84,6 +84,24 @@ static void preencher_estado(const json& j, Estado* e) {
             item.y = num(it, "y");
         }
     }
+
+    // Fases de treino: "objetivo": {"pontos": [{"id","x","y","raio"}, ...]}
+    auto ob = j.find("objetivo");
+    if (ob != j.end() && ob->is_object()) {
+        auto ps = ob->find("pontos");
+        if (ps != ob->end() && ps->is_array()) {
+            for (const json& p : *ps) {
+                if (e->n_pontos >= MAX_PONTOS) break;
+                if (!p.is_object()) continue;
+                Ponto& pt = e->pontos[e->n_pontos++];
+                std::string id = texto(p, "id");
+                std::snprintf(pt.id, sizeof(pt.id), "%s", id.c_str());
+                pt.x = num(p, "x");
+                pt.y = num(p, "y");
+                pt.raio = num(p, "raio");
+            }
+        }
+    }
 }
 
 int main() {

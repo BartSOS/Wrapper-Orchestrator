@@ -3,14 +3,12 @@
   "ordem": 1,
   "bloco": "movimento",
   "titulo": "Andar até um ponto",
-  "conceito": "throttle, turn e o ângulo até o alvo (atan2, graus x radianos)",
-  "texto": "Seu tanque está sozinho na arena. Leve-o até o ponto B, marcado no chão.\n\nA posição do ponto muda a cada tentativa: leia-a em estado[\"objetivo\"][\"pontos\"] (x, y e raio), não decore comandos. Você chega quando o centro do tanque fica a uma distância do ponto menor ou igual ao raio dele.\n\nPara andar, use throttle (de -1 a 1; com 1 o tanque anda 5 unidades por tick) e turn (de -1 a 1; com 1 o chassi gira 9 graus por tick). O tanque anda sempre para onde o chassi aponta (o campo angle).\n\nO segredo é calcular o ângulo do tanque até o ponto e girar até o chassi apontar para lá. Todos os ângulos da arena estão em graus: 0 aponta para +x e 90 para +y.",
+  "conceito": "throttle, turn e ângulo até o alvo",
+  "texto": "Leve o tanque até o ponto B. A posição do ponto muda a cada tentativa: leia estado[\"objetivo\"][\"pontos\"].",
   "dicas": [
-    "angulo_para(meu.x, meu.y, ponto_x, ponto_y) dá a direção do ponto, já em graus.",
-    "diferenca_angulo(meu.angle, alvo) diz quanto falta girar: positivo pede turn positivo, negativo pede turn negativo.",
-    "atan2 das linguagens devolve radianos; se calcular sozinho, converta para graus (multiplique por 180 e divida por pi).",
-    "Não precisa parar para girar: dá para usar throttle e turn no mesmo tick.",
-    "Gire mais devagar quando faltar pouco (turn proporcional à diferença), senão o chassi passa do ângulo e fica oscilando."
+    "angulo_para dá a direção do ponto em graus; atan2 sozinho dá radianos.",
+    "diferenca_angulo(meu.angle, alvo) diz para que lado girar (turn de -1 a 1, 9 graus por tick).",
+    "Com throttle 1 o tanque anda 5 unidades por tick para onde o chassi aponta."
   ],
   "ajudantes": ["eu", "angulo_para", "diferenca_angulo", "distancia", "montar_acao"],
   "cenario": {
@@ -28,8 +26,8 @@
   "objetivos": [
     {"tipo": "chegar", "ponto": "B", "ate_tick": 360}
   ],
-  "estrelas": [
-    {"estrelas": 2, "metrica": "ticks", "max": 240},
-    {"estrelas": 3, "metrica": "ticks", "max": 170}
+  "baloes": [
+    {"baloes": 2, "metrica": "ticks", "max": 240},
+    {"baloes": 3, "metrica": "ticks", "max": 170}
   ]
 }

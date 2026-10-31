@@ -1,0 +1,21 @@
+{
+  "_comentario": "Veredito esperado de cada bot de referência (<fase>__<rotulo>.py) em qualquer seed. motivo_contem: trecho que o motivo do avaliar_fase deve ter (falha pelo motivo certo). Lido por testar_fases.py (skill boca-gerenciar-engine) e por testes/testar_avaliador.py.",
+  "01_andar__3baloes": {"passou": true, "baloes": 3},
+  "01_andar__1balao": {"passou": true, "baloes": 1},
+  "01_andar__falha": {"passou": false, "baloes": 0, "motivo_contem": "Não chegou ao ponto B"},
+  "02_parar__3baloes": {"passou": true, "baloes": 3},
+  "02_parar__1balao": {"passou": true, "baloes": 1},
+  "02_parar__falha": {"passou": false, "baloes": 0, "motivo_contem": "raio do ponto B"},
+  "03_percurso__3baloes": {"passou": true, "baloes": 3},
+  "03_percurso__1balao": {"passou": true, "baloes": 1},
+  "03_percurso__falha": {"passou": false, "baloes": 0, "motivo_contem": "fora da ordem"},
+  "04_mira_parado__3baloes": {"passou": true, "baloes": 3},
+  "04_mira_parado__1balao": {"passou": true, "baloes": 1},
+  "04_mira_parado__falha": {"passou": false, "baloes": 0, "motivo_contem": "errar"},
+  "05_mira_andando__3baloes": {"passou": true, "baloes": 3},
+  "05_mira_andando__1balao": {"passou": true, "baloes": 1},
+  "05_mira_andando__falha": {"passou": false, "baloes": 0, "motivo_contem": "depois do limite"},
+  "06_artilharia__3baloes": {"passou": true, "baloes": 3},
+  "06_artilharia__1balao": {"passou": true, "baloes": 1},
+  "06_artilharia__falha": {"passou": false, "baloes": 0, "motivo_contem": "destruído pela artilharia"}
+}

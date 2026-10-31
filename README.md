@@ -29,6 +29,8 @@ Documentos para as equipes: o enunciado do Desafio (fonte em `Boca-Game-Jam-Pet/
 | `TOPCOM_MAX_BOTS` | 20 | Limite de bots na partida (`script.sh` e engine). O `--benchmark` usa para medir acima de 20. |
 | `TOPCOM_COMPILE_JOBS` | automático | Compilações simultâneas. Automático: `min(nproc, memória disponível / 500 MB)`, mínimo 1 (em contêiner com limite de memória, vale o que sobra no cgroup). |
 | `TOPCOM_TIMEOUT_PARTIDA` | calculado | Orçamento de tempo real da partida, em segundos (seção 3). Sobrepõe o cálculo; só para ensaios. |
+| `TOPCOM_FASE` | — | Caminho do JSON de uma fase de treino (`fases/<id>.json`). Liga o **modo fase** (seção 1.2). |
+| `TOPCOM_FASE_SEED` | sorteada | Seed do modo fase (0 a 4294967295): sorteia as faixas `[min, max]` do cenário e os hazards. |
 
 O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já inclui `TOPCOM_SEED` (sorteada pelo BOCA para cada partida e gravada no resultado), `TOPCOM_MAX_BOTS` (20, item 7.8) e `TOPCOM_COMPILE_JOBS` (se definido no servidor). Para reproduzir uma partida do BOCA, use a `seed` do `match_frames.json` com `gerenciar_engine.py --testar --seed X`.
 
@@ -72,6 +74,44 @@ O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já in
 
 ---
 
+## 1.2 Modo fase (fases de treino)
+
+As fases de treino (aba **Treino** do BOCA) usam a engine real num cenário controlado, com 1 bot. Sem `TOPCOM_FASE`, nada disto se aplica e a engine é exatamente a do torneio: com a mesma `TOPCOM_SEED`, os replays são idênticos aos da versão sem o modo fase.
+
+```bash
+TOPCOM_FASE=/caminho/fases/01_andar.json TOPCOM_FASE_SEED=123 bash script.sh <pasta>
+```
+
+- **Bots:** se `<pasta>/submissoes/` existir, o bot vem dela e o `resultado_fase.json` é gravado em `<pasta>/`. Senão `<pasta>` é a própria pasta dos bots, e o resultado fica na raiz do orquestrador, ao lado do `match_frames.json`. Só 1 bot joga (o primeiro em ordem alfabética); os outros vão para `excluidos[]`.
+- **Engine:** o `script.sh` chama `build/engine --fase <JSON absoluto> --fase-seed <N> "<bot>"`. A seed da fase também é a seed da partida (vai para `seed` e `fase.seed`). Cenário inválido: a engine sai com código 2 e uma mensagem `[ENGINE ERRO] Cenario da fase invalido (...): <campo>` sem iniciar o bot, e o `script.sh` termina sem `match_frames.json`.
+- **Fim da partida:** em `cenario.max_ticks` ou quando o jogador é destruído. Alvos não encerram a partida.
+- **Avaliação:** depois da consolidação, `build/avaliar_fase <fase.json> match_frames.json > resultado_fase.json` (fonte `engine/avaliar_fase.cpp`, da frente das fases). Ele compila junto com a engine, com as mesmas flags e a mesma assinatura em `build/`. Se o fonte não existir ou não compilar, uma linha de aviso e a fase roda sem avaliação.
+
+### Bloco `cenario` (lido pela engine)
+
+Número = valor fixo; `[min, max]` = sorteado com a seed (inteiro nos ticks); chave ausente = padrão da arena.
+
+| Chave | Padrão | Significado |
+| :--- | :--- | :--- |
+| `max_ticks` | 1500 | Duração máxima (1 a 1500). |
+| `jogador` | `{x: 860, y: 500, angulo: 180, hp: 100, energia: 100}` | Início do tanque do bot (o padrão é o nascimento de 1 bot no torneio). |
+| `pontos` | `[]` | Marcadores `{id, x, y, raio = 25}`, no máximo 16, `id` com até 15 caracteres. Não colidem nem aparecem em `enemies`; chegam ao bot em `objetivo`. |
+| `alvos` | `[]` | Tanques inertes da engine `{id, x, y, hp = 100, angulo = 0}`, no máximo 19, com ids 2, 3... na ordem do arquivo. Aparecem em `enemies` como tanques comuns, não agem e podem ser destruídos. Ficam fora do ranking. |
+| `artilharia` | `"aleatoria"` | `"aleatoria"` (como no torneio), `false` ou `[]` (nenhuma) ou a lista programada `{tick, x, y, raio = 80}`. Com `no_jogador: true` (sem x/y), a bomba cai na posição atual do jogador no tick, deslocada por `desvio` (número ou `[min, max]`, padrão 0) numa direção sorteada, limitada à arena. Aviso `ARTILLERY_WARN` no tick e impacto 3 s depois. |
+| `laser` | `true` | `false` desliga o laser. |
+| `itens` | `"aleatorios"` | `false` (nenhum), `"aleatorios"` (como no torneio) ou a lista fixa `{tipo: "HEAL" \| "ENERGY", x, y}`, posta no tick 0. |
+| `zona` | `true` | `false` desliga a zona de radiação, que fecha depois do tick 600. |
+
+Com artilharia programada, a aleatória fica desligada. Com só artilharia ou só laser aleatórios, o sorteio periódico sempre escolhe o que está ligado.
+
+### Saídas do modo fase
+
+- **Estado do bot:** ganha `"objetivo": {"pontos": [{"id": "B", "x": 800.0, "y": 512.3, "raio": 25.0}]}`, na ordem do arquivo. Em C: `e->n_pontos` e `e->pontos[i]` (`Ponto`: `id`, `x`, `y`, `raio`; `MAX_PONTOS` 16). No torneio a chave não existe e `n_pontos` é 0.
+- **`match_frames.json`:** o bloco `fase` é a primeira chave, com o cenário sorteado: `{id, seed, max_ticks, jogador, pontos[{id, ordem, x, y, raio}], alvos[{id, tank_id, x, y, hp, angulo}], artilharia, laser, itens, zona}`. Na artilharia programada, cada item traz `{tick, x, y, raio, criada}` (e `no_jogador: true`, com x/y efetivos ou `null` se não chegou a cair). Os alvos aparecem em `frames[].tanks` com `"alvo": true`, e `bots[]` só tem o jogador. O que a Unity desenha: `Boca-Game-Jam-Pet/desafio/VISUALIZADOR_WEB.md`, seção "Bloco fase".
+- **Teste:** `python3 mock_bots/treino_engine/testar_modo_fase.py` (WSL) roda os cenários de `mock_bots/treino_engine/` com bots nas 4 linguagens numa cópia em `/tmp/frente_engine/modo_fase` e confere tudo isso.
+
+---
+
 ## 2. O que o Competidor Escreve
 
 Apenas a função `pensar(estado)`, chamada a cada tick. O competidor **não** escreve `main()`, não lê `stdin` e não faz parsing de JSON: os wrappers fazem isso.
@@ -88,9 +128,12 @@ O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, 
   "self":    {"id", "x", "y", "vx", "vy", "angle", "turret_angle", "hp", "energy", "cooldown", "shield"},
   "enemies": [{"id", "x", "y", "vx", "vy"}],
   "hazards": [{"id", "type": "ARTILLERY|LASER", "x", "y", "radius", "timer", "angle", "duration"}],
-  "items":   [{"id", "type": "HEAL|ENERGY", "x", "y"}]
+  "items":   [{"id", "type": "HEAL|ENERGY", "x", "y"}],
+  "objetivo": {"pontos": [{"id", "x", "y", "raio"}]}
 }
 ```
+
+`objetivo` só existe nas fases de treino (seção 1.2); no torneio a chave não vem.
 
 ### Saída — ação
 
@@ -192,6 +235,7 @@ Isolamento de cada bot: `ulimit -v` de ~2 GB. Bots Java rodam com `-Xmx512m -XX:
 4. Faz o **inventário pré-compilação** (equipe, arquivo, tamanho, linguagem), compila os bots em paralelo (`TOPCOM_COMPILE_JOBS`) com `wrappers/build_bot.sh` e faz o **inventário pós-compilação** (bots aprovados com slot e comando; excluídos com motivo). O log de cada bot fica em `build/logs/<equipe>.log` e o resultado é impresso na ordem dos nomes; a ordem dos slots é sempre a alfabética. A falha de um bot não aborta a partida.
 5. Executa a partida e transmite os eventos (`[ABATE]`, `[CURA]`, `[BOMBA]`, `[ZONA]`, `[LASER]`, `[TIMEOUT]`, `[DESCONEXAO]`, `[FIM]`).
 6. Consolida o `match_frames.json` (contrato C1 acima) com os nomes reais das equipes, mapeados pelo `id` do slot.
+7. Só no modo fase (seção 1.2): roda o `build/avaliar_fase` e grava o `resultado_fase.json`.
 
 ---
 
@@ -209,6 +253,7 @@ battle-orchestrator/
 ├── mock_bots/
 │   ├── bots-base/         # Conjunto canônico de bots de exemplo (testes, benchmark e checkpoint inicial)
 │   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c)
+│   ├── treino_engine/     # Cenários e bots de teste do modo fase + testar_modo_fase.py
 │   └── malicious_bots/    # fork_bomb, infinite_memory, file_system_hacker, system_call.c
 ├── submissoes/            # Entrada da partida (conteúdo ignorado pelo git)
 └── build/, replays/       # Saídas geradas (ignoradas pelo git): build/engine, build/wrappers/, build/bots/, build/logs/

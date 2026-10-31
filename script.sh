@@ -884,7 +884,7 @@ except Exception as e:
     print(f"  [AVISO] resultado_fase.json ilegivel: {e}")
     sys.exit(0)
 veredito = "PASSOU" if r.get("passou") else "NAO PASSOU"
-print(f"  Fase {r.get('fase')}: {veredito} | estrelas {r.get('estrelas')} | {r.get('motivo', '')}")
+print(f"  Fase {r.get('fase')}: {veredito} | balões {r.get('baloes')} | {r.get('motivo', '')}")
 EOF
     echo -e "${TAG_OK} Resultado da fase gravado em: ${saida}"
 }

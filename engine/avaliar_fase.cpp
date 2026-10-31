@@ -573,8 +573,10 @@ private:
         int lim = limite(o);
         MaisPerto m;
         int tickEntrada = -1;
+        double dFinal = -1;
         percorrerVivo(1 << 30, [&](const Quadro& q) {
             double d = dist(q.x, q.y, p.x, p.y);
+            if (q.tick <= lim) dFinal = d;
             if (q.tick <= lim && d < m.d) m = {d, q.tick, q.x, q.y};
             if (d <= p.raio) {
                 tickEntrada = q.tick;
@@ -595,7 +597,10 @@ private:
         } else {
             r.detalhe = "não chegou ao ponto " + p.id + "; mais perto: " + inteiro(m.d) + " unidades";
             r.motivo = "Não chegou ao ponto " + p.id + ": " + fraseMaisPerto(p, m) + ".";
-            if (m.tick >= 0 && m.d > 3 * p.raio && distanciaPercorrida_ > 3 * m.d)
+            if (m.tick >= 0 && m.d > 3 * p.raio && distanciaPercorrida_ > 100 && dFinal > m.d + 50)
+                r.motivo += " O tanque andou " + inteiro(distanciaPercorrida_) + " unidades, mas terminou a " + inteiro(dFinal) +
+                            " do ponto, mais longe do que chegou a estar: confira o sinal do turn e se o ângulo está em graus.";
+            else if (m.tick >= 0 && m.d > 3 * p.raio && distanciaPercorrida_ > 3 * m.d)
                 r.motivo += " O tanque andou bastante (" + inteiro(distanciaPercorrida_) +
                             " unidades) sem se aproximar: confira se o ângulo está em graus e se o sinal do turn está certo.";
             else if (distanciaPercorrida_ < 10)

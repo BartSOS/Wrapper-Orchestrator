@@ -8,6 +8,8 @@
  * Execução:   ./engine "python3 bot1.py" "./bot_cpp" "java -cp . Bot"
  * Ambiente:   TOPCOM_SEED (inteiro de 0 a 4294967295; sem ela, a seed é sorteada)
  *             TOPCOM_MAX_BOTS (limite de bots; padrão 20)
+ * Modo fase:  ./engine --fase fases/01_andar.json [--fase-seed N] "./bot"
+ *             (fases de treino: 1 bot, cenário do bloco "cenario", bloco "fase" no JSON)
  * Saída:      match_frames.json e replays/partida_<id>.json no diretório atual,
  *             com seed, ranking (bots[]) e todos os frames.
  * ============================================================================
@@ -31,6 +33,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cerrno>
+#include <optional>
+#include <stdexcept>
 
 // Dependências POSIX para IPC e Subprocessos
 #include <unistd.h>
@@ -389,6 +393,7 @@ struct Tank {
     bool is_alive = true;
     int consecutive_timeouts = 0;
     int tick_eliminacao = -1; // tick em que foi eliminado (-1 = vivo)
+    bool alvo = false;        // modo fase: tanque inerte da engine (sem bot)
 };
 
 struct Projectile {
@@ -424,6 +429,253 @@ struct Event {
 };
 
 // ============================================================================
+// 4b. MODO CENÁRIO (FASES DE TREINO)
+// ============================================================================
+// Ativado por --fase <arquivo.json> (o script.sh passa quando há TOPCOM_FASE). Lê o bloco
+// "cenario" do arquivo da fase: jogador, pontos-marcadores, alvos inertes, artilharia
+// programada, laser/itens/zona e max_ticks. Um valor numérico é fixo; [min, max] é sorteado
+// pelo rng da partida, semeado com --fase-seed (TOPCOM_FASE_SEED). Chave ausente = padrão
+// da arena. Sem --fase nada disto é usado e a engine é a do torneio.
+struct CenarioFase {
+    struct Ponto { std::string id; double x = 0, y = 0, raio = 25.0; };
+    struct Alvo { std::string id; int tank_id = 0; double x = 0, y = 0, hp = Config::TANK_MAX_HP, angulo = 0; };
+    struct Artilharia {
+        int tick = 0;
+        bool no_jogador = false;   // cai na posição atual do jogador (+ desvio)
+        double x = 0, y = 0, raio = Config::ARTILLERY_RADIUS;
+        double desvio_min = 0, desvio_max = 0;
+        bool criada = false;
+    };
+    struct ItemFixo { std::string tipo; double x = 0, y = 0; };
+    enum class Itens { ALEATORIOS, NENHUM, FIXOS };
+
+    std::string id;
+    uint32_t seed = 0;
+    int max_ticks = Config::MAX_TICKS;
+    // Padrão do jogador = nascimento de 1 bot no torneio (círculo de raio 360, olhando o centro)
+    double jx = Config::ARENA_WIDTH / 2.0 + Config::SPAWN_RADIUS, jy = Config::ARENA_HEIGHT / 2.0;
+    double jang = 180.0, jhp = Config::TANK_MAX_HP, jenergia = Config::TANK_MAX_ENERGY;
+    std::vector<Ponto> pontos;
+    std::vector<Alvo> alvos;
+    std::vector<Artilharia> artilharia;
+    bool artilharia_aleatoria = true;
+    bool laser = true;
+    Itens itens = Itens::ALEATORIOS;
+    std::vector<ItemFixo> itens_fixos;
+    bool zona = true;
+
+    [[noreturn]] static void erro(const std::string& m) { throw std::runtime_error(m); }
+
+    // Número fixo, [min, max] sorteado ou ausente (padrão; obrigatório se padrao for NaN)
+    static double sortear(const json& o, const char* k, double padrao, std::mt19937& rng, const std::string& onde) {
+        auto it = o.find(k);
+        if (it == o.end() || it->is_null()) {
+            if (std::isnan(padrao)) erro(onde + "." + k + " é obrigatório");
+            return padrao;
+        }
+        if (it->is_number()) return it->get<double>();
+        if (it->is_array() && it->size() == 2 && (*it)[0].is_number() && (*it)[1].is_number()) {
+            double a = (*it)[0].get<double>(), b = (*it)[1].get<double>();
+            if (a > b) std::swap(a, b);
+            if (a == b) return a;
+            return std::uniform_real_distribution<double>(a, b)(rng);
+        }
+        erro(onde + "." + k + " deve ser número ou [min, max]");
+    }
+
+    static int sortearInt(const json& o, const char* k, std::mt19937& rng, const std::string& onde) {
+        auto it = o.find(k);
+        if (it == o.end() || it->is_null()) erro(onde + "." + k + " é obrigatório");
+        if (it->is_number()) return static_cast<int>(std::lround(it->get<double>()));
+        if (it->is_array() && it->size() == 2 && (*it)[0].is_number() && (*it)[1].is_number()) {
+            int a = static_cast<int>(std::lround((*it)[0].get<double>()));
+            int b = static_cast<int>(std::lround((*it)[1].get<double>()));
+            if (a > b) std::swap(a, b);
+            return std::uniform_int_distribution<int>(a, b)(rng);
+        }
+        erro(onde + "." + k + " deve ser inteiro ou [min, max]");
+    }
+
+    static double limitar(double v, double margem, double tamanho) { return std::clamp(v, margem, tamanho - margem); }
+
+    // Sorteia o cenário. Ordem fixa dos sorteios: jogador, pontos, alvos, artilharia.
+    void carregar(const json& fase, std::mt19937& rng) {
+        if (!fase.is_object()) erro("o arquivo da fase não é um objeto JSON");
+        id = fase.contains("id") && fase["id"].is_string() ? fase["id"].get<std::string>() : "fase";
+        json c = fase.contains("cenario") ? fase["cenario"] : json::object();
+        if (!c.is_object()) erro("cenario deve ser um objeto");
+
+        if (c.contains("max_ticks")) {
+            max_ticks = sortearInt(c, "max_ticks", rng, "cenario");
+            if (max_ticks < 1) erro("cenario.max_ticks deve ser >= 1");
+            max_ticks = std::min(max_ticks, Config::MAX_TICKS);
+        }
+
+        json j = c.contains("jogador") ? c["jogador"] : json::object();
+        if (!j.is_object()) erro("cenario.jogador deve ser um objeto");
+        jx = limitar(sortear(j, "x", jx, rng, "jogador"), Config::TANK_RADIUS, Config::ARENA_WIDTH);
+        jy = limitar(sortear(j, "y", jy, rng, "jogador"), Config::TANK_RADIUS, Config::ARENA_HEIGHT);
+        jang = normalizeAngle(sortear(j, "angulo", jang, rng, "jogador"));
+        jhp = std::clamp(sortear(j, "hp", jhp, rng, "jogador"), 1.0, Config::TANK_MAX_HP);
+        jenergia = std::clamp(sortear(j, "energia", jenergia, rng, "jogador"), 0.0, Config::TANK_MAX_ENERGY);
+
+        const double OBRIG = std::nan("");
+        if (c.contains("pontos")) {
+            if (!c["pontos"].is_array()) erro("cenario.pontos deve ser uma lista");
+            for (const auto& p : c["pontos"]) {
+                std::string onde = "pontos[" + std::to_string(pontos.size()) + "]";
+                if (!p.is_object() || !p.contains("id") || !p["id"].is_string()) erro(onde + ".id (texto) é obrigatório");
+                Ponto pt;
+                pt.id = p["id"].get<std::string>();
+                if (pt.id.empty() || pt.id.size() > 15) erro(onde + ".id deve ter de 1 a 15 caracteres");
+                pt.x = limitar(sortear(p, "x", OBRIG, rng, onde), 0.0, Config::ARENA_WIDTH);
+                pt.y = limitar(sortear(p, "y", OBRIG, rng, onde), 0.0, Config::ARENA_HEIGHT);
+                pt.raio = std::max(1.0, sortear(p, "raio", pt.raio, rng, onde));
+                pontos.push_back(pt);
+            }
+            if (pontos.size() > 16) erro("no máximo 16 pontos (MAX_PONTOS do arena.h)");
+        }
+
+        if (c.contains("alvos")) {
+            if (!c["alvos"].is_array()) erro("cenario.alvos deve ser uma lista");
+            for (const auto& a : c["alvos"]) {
+                std::string onde = "alvos[" + std::to_string(alvos.size()) + "]";
+                if (!a.is_object() || !a.contains("id") || !a["id"].is_string()) erro(onde + ".id (texto) é obrigatório");
+                Alvo al;
+                al.id = a["id"].get<std::string>();
+                al.tank_id = static_cast<int>(alvos.size()) + 2;   // o jogador é o tanque 1
+                al.x = limitar(sortear(a, "x", OBRIG, rng, onde), Config::TANK_RADIUS, Config::ARENA_WIDTH);
+                al.y = limitar(sortear(a, "y", OBRIG, rng, onde), Config::TANK_RADIUS, Config::ARENA_HEIGHT);
+                al.hp = std::clamp(sortear(a, "hp", al.hp, rng, onde), 1.0, 1000.0);
+                al.angulo = normalizeAngle(sortear(a, "angulo", al.angulo, rng, onde));
+                alvos.push_back(al);
+            }
+            if (alvos.size() > 19) erro("no máximo 19 alvos");
+        }
+
+        if (c.contains("artilharia")) {
+            const json& art = c["artilharia"];
+            if (art.is_string() && art.get<std::string>() == "aleatoria") {
+                artilharia_aleatoria = true;
+            } else if (art.is_boolean() && !art.get<bool>()) {
+                artilharia_aleatoria = false;
+            } else if (art.is_array()) {
+                artilharia_aleatoria = false;
+                for (const auto& a : art) {
+                    std::string onde = "artilharia[" + std::to_string(artilharia.size()) + "]";
+                    if (!a.is_object()) erro(onde + " deve ser um objeto");
+                    Artilharia ar;
+                    ar.tick = sortearInt(a, "tick", rng, onde);
+                    if (ar.tick < 0) erro(onde + ".tick deve ser >= 0");
+                    ar.no_jogador = a.value("no_jogador", false);
+                    if (ar.no_jogador) {
+                        auto d = a.find("desvio");
+                        if (d != a.end() && d->is_number()) {
+                            ar.desvio_min = ar.desvio_max = d->get<double>();
+                        } else if (d != a.end() && d->is_array() && d->size() == 2 && (*d)[0].is_number() && (*d)[1].is_number()) {
+                            ar.desvio_min = (*d)[0].get<double>();
+                            ar.desvio_max = (*d)[1].get<double>();
+                            if (ar.desvio_min > ar.desvio_max) std::swap(ar.desvio_min, ar.desvio_max);
+                        } else if (d != a.end() && !d->is_null()) {
+                            erro(onde + ".desvio deve ser número ou [min, max]");
+                        }
+                        ar.desvio_min = std::max(0.0, ar.desvio_min);
+                        ar.desvio_max = std::max(0.0, ar.desvio_max);
+                    } else {
+                        ar.x = limitar(sortear(a, "x", OBRIG, rng, onde), 0.0, Config::ARENA_WIDTH);
+                        ar.y = limitar(sortear(a, "y", OBRIG, rng, onde), 0.0, Config::ARENA_HEIGHT);
+                    }
+                    ar.raio = std::max(1.0, sortear(a, "raio", ar.raio, rng, onde));
+                    artilharia.push_back(ar);
+                }
+            } else {
+                erro("cenario.artilharia deve ser \"aleatoria\", false ou uma lista");
+            }
+        }
+
+        if (c.contains("laser")) {
+            const json& l = c["laser"];
+            if (l.is_boolean()) laser = l.get<bool>();
+            else if (l.is_string() && (l.get<std::string>() == "aleatorio" || l.get<std::string>() == "aleatoria")) laser = true;
+            else erro("cenario.laser deve ser true, false ou \"aleatorio\"");
+        }
+
+        if (c.contains("itens")) {
+            const json& it = c["itens"];
+            if (it.is_boolean()) itens = it.get<bool>() ? Itens::ALEATORIOS : Itens::NENHUM;
+            else if (it.is_string() && it.get<std::string>() == "aleatorios") itens = Itens::ALEATORIOS;
+            else if (it.is_array()) {
+                itens = Itens::FIXOS;
+                for (const auto& i : it) {
+                    std::string onde = "itens[" + std::to_string(itens_fixos.size()) + "]";
+                    if (!i.is_object()) erro(onde + " deve ser um objeto");
+                    ItemFixo f;
+                    std::string tipo = i.value("tipo", std::string("HEAL"));
+                    if (tipo == "HEAL" || tipo == "CURA") f.tipo = "HEAL";
+                    else if (tipo == "ENERGY" || tipo == "ENERGIA") f.tipo = "ENERGY";
+                    else erro(onde + ".tipo deve ser HEAL ou ENERGY");
+                    f.x = limitar(sortear(i, "x", OBRIG, rng, onde), 0.0, Config::ARENA_WIDTH);
+                    f.y = limitar(sortear(i, "y", OBRIG, rng, onde), 0.0, Config::ARENA_HEIGHT);
+                    itens_fixos.push_back(f);
+                }
+            } else erro("cenario.itens deve ser false, \"aleatorios\" ou uma lista");
+        }
+
+        if (c.contains("zona")) {
+            if (!c["zona"].is_boolean()) erro("cenario.zona deve ser true ou false");
+            zona = c["zona"].get<bool>();
+        }
+    }
+
+    // "objetivo" do estado enviado ao bot (C-E2)
+    json objetivoEstado() const {
+        json ps = json::array();
+        for (const auto& p : pontos) ps.push_back({{"id", p.id}, {"x", p.x}, {"y", p.y}, {"raio", p.raio}});
+        return {{"pontos", ps}};
+    }
+
+    // Bloco "fase" do match_frames.json: o cenário já sorteado (C-E3/C-E4)
+    json paraJson() const {
+        json j;
+        j["id"] = id;
+        j["seed"] = seed;
+        j["max_ticks"] = max_ticks;
+        j["jogador"] = {{"tank_id", 1}, {"x", jx}, {"y", jy}, {"angulo", jang}, {"hp", jhp}, {"energia", jenergia}};
+        j["pontos"] = json::array();
+        for (size_t i = 0; i < pontos.size(); ++i) {
+            const auto& p = pontos[i];
+            j["pontos"].push_back({{"id", p.id}, {"ordem", i + 1}, {"x", p.x}, {"y", p.y}, {"raio", p.raio}});
+        }
+        j["alvos"] = json::array();
+        for (const auto& a : alvos) {
+            j["alvos"].push_back({{"id", a.id}, {"tank_id", a.tank_id}, {"x", a.x}, {"y", a.y}, {"hp", a.hp}, {"angulo", a.angulo}});
+        }
+        if (artilharia_aleatoria) {
+            j["artilharia"] = "aleatoria";
+        } else {
+            j["artilharia"] = json::array();
+            for (const auto& a : artilharia) {
+                json o = {{"tick", a.tick}, {"raio", a.raio}, {"criada", a.criada}};
+                bool tem_pos = a.criada || !a.no_jogador;
+                o["x"] = tem_pos ? json(a.x) : json(nullptr);
+                o["y"] = tem_pos ? json(a.y) : json(nullptr);
+                if (a.no_jogador) o["no_jogador"] = true;
+                j["artilharia"].push_back(o);
+            }
+        }
+        j["laser"] = laser;
+        if (itens == Itens::ALEATORIOS) j["itens"] = "aleatorios";
+        else if (itens == Itens::NENHUM) j["itens"] = false;
+        else {
+            j["itens"] = json::array();
+            for (const auto& f : itens_fixos) j["itens"].push_back({{"tipo", f.tipo}, {"x", f.x}, {"y", f.y}});
+        }
+        j["zona"] = zona;
+        return j;
+    }
+};
+
+// ============================================================================
 // 5. NARRAÇÃO
 // ============================================================================
 
@@ -454,6 +706,7 @@ private:
     int next_entity_id = 1000;
     std::mt19937 rng;
     uint32_t seed = 0;
+    std::optional<CenarioFase> fase;   // modo fase (--fase); vazio no torneio
     std::chrono::steady_clock::time_point inicio_partida = std::chrono::steady_clock::now();
 
     struct Nascimento {
@@ -508,8 +761,16 @@ private:
     }
 
 public:
-    ArenaEngine(const std::vector<std::string>& bot_commands, uint32_t seed_partida) : seed(seed_partida) {
+    // fase_json != nullptr liga o modo fase (1 bot + cenário). Lança std::runtime_error se o
+    // cenário for inválido, antes de iniciar qualquer bot.
+    ArenaEngine(const std::vector<std::string>& bot_commands, uint32_t seed_partida, const json* fase_json = nullptr)
+        : seed(seed_partida) {
         rng.seed(seed);
+        if (fase_json) {
+            fase.emplace();
+            fase->seed = seed;
+            fase->carregar(*fase_json, rng);
+        }
 
         // Inicia e posiciona os tanques na arena (main já aplicou o limite)
         auto nascimentos = posicoesDeNascimento(bot_commands.size());
@@ -520,6 +781,13 @@ public:
             t.pos = nascimentos[i].pos;
             t.angle = nascimentos[i].angle;
             t.turret_angle = t.angle;
+            if (fase) {
+                t.pos = {fase->jx, fase->jy};
+                t.angle = fase->jang;
+                t.turret_angle = t.angle;
+                t.hp = fase->jhp;
+                t.energy = fase->jenergia;
+            }
 
             auto bot = std::make_unique<BotProcess>(i + 1, bot_commands[i]);
             if (bot->start()) {
@@ -533,17 +801,40 @@ public:
             tanks.push_back(t);
         }
 
+        if (fase) {
+            // Alvos: tanques inertes da engine (sem processo), ids 2, 3... na ordem do arquivo
+            for (const auto& a : fase->alvos) {
+                Tank t;
+                t.id = a.tank_id;
+                t.pos = {a.x, a.y};
+                t.angle = a.angulo;
+                t.turret_angle = a.angulo;
+                t.hp = a.hp;
+                t.alvo = true;
+                tanks.push_back(t);
+            }
+            for (const auto& f : fase->itens_fixos) {
+                items.push_back({next_entity_id++, f.tipo, {f.x, f.y}});
+            }
+        }
+
         match_replay["config"] = {
             {"arena_width", Config::ARENA_WIDTH},
             {"arena_height", Config::ARENA_HEIGHT},
-            {"max_ticks", Config::MAX_TICKS}
+            {"max_ticks", fase ? fase->max_ticks : Config::MAX_TICKS}
         };
         match_replay["frames"] = json::array();
     }
 
     void spawnRandomHazardsAndItems() {
+        // Modo fase: cada fonte pode ser desligada pelo cenário (no torneio tudo fica ligado)
+        const bool itens_aleatorios = !fase || fase->itens == CenarioFase::Itens::ALEATORIOS;
+        const bool artilharia_ok = !fase || fase->artilharia_aleatoria;
+        const bool laser_ok = !fase || fase->laser;
+        const bool zona_ok = !fase || fase->zona;
+
         // Gerador periódico de itens de cura ou energia
-        if (tick_count % 150 == 0 && items.size() < 4) {
+        if (itens_aleatorios && tick_count % 150 == 0 && items.size() < 4) {
             std::uniform_real_distribution<double> dist_x(50, Config::ARENA_WIDTH - 50);
             std::uniform_real_distribution<double> dist_y(50, Config::ARENA_HEIGHT - 50);
             std::uniform_int_distribution<int> dist_type(0, 1);
@@ -558,14 +849,17 @@ public:
         // Gerador de feixes Laser ou bombardeios de Artilharia (acelera conforme o tempo passa)
         int hazard_freq = (tick_count > 400) ? 90 : 200;
         int max_hazards = (tick_count > 400) ? 5 : 3;
-        if (tick_count % hazard_freq == 0 && hazards.size() < max_hazards) {
+        if ((artilharia_ok || laser_ok) && tick_count % hazard_freq == 0 && hazards.size() < max_hazards) {
             std::uniform_real_distribution<double> dist_x(100, Config::ARENA_WIDTH - 100);
             std::uniform_real_distribution<double> dist_y(100, Config::ARENA_HEIGHT - 100);
             std::uniform_int_distribution<int> dist_type(0, 1);
 
             Hazard h;
             h.id = next_entity_id++;
-            if (dist_type(rng) == 0) {
+            int tipo = dist_type(rng);
+            if (!artilharia_ok) tipo = 1;   // só no modo fase: a fonte desligada não sai
+            if (!laser_ok) tipo = 0;
+            if (tipo == 0) {
                 h.type = "ARTILLERY";
                 h.pos = {dist_x(rng), dist_y(rng)};
                 h.radius = (tick_count > 400) ? Config::ARTILLERY_RADIUS * 1.3 : Config::ARTILLERY_RADIUS;
@@ -585,8 +879,32 @@ public:
             hazards.push_back(h);
         }
 
+        // Modo fase: artilharia programada para este tick (fixa ou na posição atual do jogador)
+        if (fase) {
+            for (auto& a : fase->artilharia) {
+                if (a.criada || a.tick != tick_count) continue;
+                if (a.no_jogador) {
+                    Vec2 base = tanks.empty() ? Vec2(Config::ARENA_WIDTH / 2.0, Config::ARENA_HEIGHT / 2.0) : tanks[0].pos;
+                    double d = a.desvio_max > a.desvio_min
+                        ? std::uniform_real_distribution<double>(a.desvio_min, a.desvio_max)(rng) : a.desvio_min;
+                    double ang = std::uniform_real_distribution<double>(0.0, 2.0 * M_PI)(rng);
+                    a.x = std::clamp(base.x + d * std::cos(ang), 0.0, Config::ARENA_WIDTH);
+                    a.y = std::clamp(base.y + d * std::sin(ang), 0.0, Config::ARENA_HEIGHT);
+                }
+                Hazard h;
+                h.id = next_entity_id++;
+                h.type = "ARTILLERY";
+                h.pos = {a.x, a.y};
+                h.radius = a.raio;
+                h.timer = Config::ARTILLERY_TIMER;
+                current_events.push_back({"ARTILLERY_WARN", h.pos.x, h.pos.y, -1, -1});
+                hazards.push_back(h);
+                a.criada = true;
+            }
+        }
+
         // Tempestade de Radiação / Fechamento de Zona após o tick 600 (60s)
-        if (tick_count > 600 && tick_count % 10 == 0) {
+        if (zona_ok && tick_count > 600 && tick_count % 10 == 0) {
             double safe_radius = std::max(80.0, 550.0 - (tick_count - 600) * 0.7);
             Vec2 center = {Config::ARENA_WIDTH / 2.0, Config::ARENA_HEIGHT / 2.0};
             for (auto& t : tanks) {
@@ -645,6 +963,9 @@ public:
                 {"x", item.pos.x}, {"y", item.pos.y}
             });
         }
+
+        // Modo fase: pontos do objetivo (C-E2). No torneio a chave não existe.
+        if (fase) j["objetivo"] = fase->objetivoEstado();
 
         return j;
     }
@@ -923,12 +1244,14 @@ public:
         
         frame["tanks"] = json::array();
         for (const auto& t : tanks) {
-            frame["tanks"].push_back({
+            json tj = {
                 {"id", t.id}, {"x", t.pos.x}, {"y", t.pos.y},
                 {"angle", t.angle}, {"turret", t.turret_angle},
                 {"hp", t.hp}, {"energy", t.energy},
                 {"shield", t.shield_active}, {"kills", t.kills}, {"alive", t.is_alive}
-            });
+            };
+            if (t.alvo) tj["alvo"] = true;   // só existe no modo fase
+            frame["tanks"].push_back(tj);
         }
 
         frame["projectiles"] = json::array();
@@ -992,7 +1315,9 @@ public:
     // A vida de tanques destruídos conta como 0 (o HP interno pode ficar negativo).
     std::vector<const Tank*> classificacao() const {
         std::vector<const Tank*> ordem;
-        for (const auto& t : tanks) ordem.push_back(&t);
+        for (const auto& t : tanks) {
+            if (!t.alvo) ordem.push_back(&t);   // alvos do modo fase não entram no ranking
+        }
         std::sort(ordem.begin(), ordem.end(), [](const Tank* a, const Tank* b) {
             if (a->is_alive != b->is_alive) return a->is_alive > b->is_alive;
             if (a->kills != b->kills) return a->kills > b->kills;
@@ -1013,7 +1338,13 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         inicio_partida = std::chrono::steady_clock::now();
 
-        while (tick_count < Config::MAX_TICKS && countAliveTanks() > 1) {
+        // Torneio: até MAX_TICKS ou sobrar um tanque. Fase: até max_ticks ou o jogador cair
+        // (os alvos não encerram a partida; quem decide se a fase passou é o avaliar_fase).
+        auto continuar = [&]() {
+            if (fase) return tick_count < fase->max_ticks && !tanks.empty() && tanks[0].is_alive;
+            return tick_count < Config::MAX_TICKS && countAliveTanks() > 1;
+        };
+        while (continuar()) {
             spawnRandomHazardsAndItems();
             processBotCommands();
             updatePhysicsAndCollisions();
@@ -1044,6 +1375,7 @@ public:
         // O script.sh troca "Bot_<id>" pelo nome da equipe e acrescenta a linguagem.
         json ranking = json::array();
         for (const auto& t : tanks) {
+            if (t.alvo) continue;
             size_t posicao = std::find(sorted_tanks.begin(), sorted_tanks.end(), &t) - sorted_tanks.begin() + 1;
             ranking.push_back({
                 {"id", t.id},
@@ -1101,6 +1433,7 @@ public:
         match_replay["turnos"] = tick_count;
         match_replay["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
         match_replay["bots"] = ranking;
+        if (fase) match_replay["fase"] = fase->paraJson();
 
         std::ofstream file("match_frames.json");
         if (file.is_open()) {
@@ -1147,23 +1480,84 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Opções antes dos comandos dos bots (nenhum comando de bot começa com "--"):
+    //   --fase <arquivo.json>   modo fase (treino): 1 bot no cenário do arquivo
+    //   --fase-seed <N>         seed dos sorteios do cenário e da partida (0 a 4294967295)
+    int primeiro_bot = 1;
+    std::string fase_arquivo;
+    const char* fase_seed_txt = nullptr;
+    while (primeiro_bot < argc && std::strncmp(argv[primeiro_bot], "--", 2) == 0) {
+        std::string op = argv[primeiro_bot];
+        if (op == "--fase" && primeiro_bot + 1 < argc) {
+            fase_arquivo = argv[primeiro_bot + 1];
+        } else if (op == "--fase-seed" && primeiro_bot + 1 < argc) {
+            fase_seed_txt = argv[primeiro_bot + 1];
+        } else {
+            std::cerr << "[ENGINE ERRO] Opcao invalida ou sem valor: " << op << " (use --fase ARQ e --fase-seed N)\n";
+            return 1;
+        }
+        primeiro_bot += 2;
+    }
+    if (primeiro_bot >= argc) {
+        std::cerr << "[ENGINE ERRO] Nenhum comando de bot informado.\n";
+        return 1;
+    }
+
     int max_bots = Config::MAX_BOTS_PADRAO;
     if (const char* env = std::getenv("TOPCOM_MAX_BOTS")) {
         int v = std::atoi(env);
         if (v > 0) max_bots = v;
     }
 
-    // Seed da partida: TOPCOM_SEED (0 a 4294967295) reproduz hazards e itens; sem ela, sorteia.
-    // Valor inválido também cai no sorteio, com aviso. A seed usada vai para o JSON.
-    uint32_t seed = 0;
-    bool seed_informada = false;
-    if (const char* env = std::getenv("TOPCOM_SEED")) {
+    // Modo fase: o arquivo é lido aqui (erro = código 2, sem iniciar bots) e só 1 bot joga
+    json fase_json;
+    if (!fase_arquivo.empty()) {
+        std::ifstream arq(fase_arquivo);
+        if (!arq.is_open()) {
+            std::cerr << "[ENGINE ERRO] Arquivo da fase nao encontrado: " << fase_arquivo << "\n";
+            return 2;
+        }
+        try {
+            fase_json = json::parse(arq, nullptr, true, true);
+        } catch (const std::exception& e) {
+            std::cerr << "[ENGINE ERRO] Arquivo da fase invalido (" << fase_arquivo << "): " << e.what() << "\n";
+            return 2;
+        }
+        if (argc - primeiro_bot > 1) {
+            std::cerr << "[ENGINE AVISO] Modo fase: so o primeiro bot joga (" << (argc - primeiro_bot) << " informados).\n";
+        }
+        max_bots = 1;
+    }
+
+    // Lê uma seed de 0 a 4294967295 (só dígitos)
+    auto lerSeed = [](const char* txt, uint32_t& saida) {
         char* fim = nullptr;
         errno = 0;
-        unsigned long long v = std::strtoull(env, &fim, 10);
-        bool so_digitos = *env != '\0' && std::all_of(env, env + std::strlen(env), [](char c) { return c >= '0' && c <= '9'; });
+        unsigned long long v = std::strtoull(txt, &fim, 10);
+        bool so_digitos = *txt != '\0' && std::all_of(txt, txt + std::strlen(txt), [](char c) { return c >= '0' && c <= '9'; });
         if (so_digitos && errno == 0 && fim && *fim == '\0' && v <= UINT32_MAX) {
-            seed = static_cast<uint32_t>(v);
+            saida = static_cast<uint32_t>(v);
+            return true;
+        }
+        return false;
+    };
+
+    // Seed da partida: TOPCOM_SEED (0 a 4294967295) reproduz hazards e itens; sem ela, sorteia.
+    // Valor inválido também cai no sorteio, com aviso. A seed usada vai para o JSON.
+    // No modo fase vale --fase-seed (TOPCOM_FASE_SEED), que também sorteia o cenário.
+    uint32_t seed = 0;
+    bool seed_informada = false;
+    const char* origem_seed = " (TOPCOM_SEED)";
+    if (!fase_arquivo.empty() && fase_seed_txt) {
+        if (lerSeed(fase_seed_txt, seed)) {
+            seed_informada = true;
+            origem_seed = " (TOPCOM_FASE_SEED)";
+        } else {
+            std::cerr << "[ENGINE AVISO] TOPCOM_FASE_SEED invalida ('" << fase_seed_txt << "'): use um inteiro de 0 a 4294967295. Sorteando outra.\n";
+        }
+    }
+    if (const char* env = std::getenv("TOPCOM_SEED"); !seed_informada && env) {
+        if (lerSeed(env, seed)) {
             seed_informada = true;
         } else {
             std::cerr << "[ENGINE AVISO] TOPCOM_SEED invalida ('" << env << "'): use um inteiro de 0 a 4294967295. Sorteando outra.\n";
@@ -1179,15 +1573,24 @@ int main(int argc, char* argv[]) {
         }
         seed = static_cast<uint32_t>(mistura ^ (mistura >> 32));
     }
-    std::cout << "[ENGINE] Seed da partida: " << seed << (seed_informada ? " (TOPCOM_SEED)" : " (sorteada)") << "\n";
+    std::cout << "[ENGINE] Seed da partida: " << seed << (seed_informada ? origem_seed : " (sorteada)") << "\n";
 
     std::vector<std::string> bot_commands;
-    for (int i = 1; i < argc && i <= max_bots; ++i) {
+    for (int i = primeiro_bot; i < argc && i - primeiro_bot < max_bots; ++i) {
         bot_commands.push_back(argv[i]);
     }
 
-    ArenaEngine arena(bot_commands, seed);
-    arena.run();
+    std::unique_ptr<ArenaEngine> arena;
+    try {
+        arena = std::make_unique<ArenaEngine>(bot_commands, seed, fase_arquivo.empty() ? nullptr : &fase_json);
+    } catch (const std::exception& e) {
+        std::cerr << "[ENGINE ERRO] Cenario da fase invalido (" << fase_arquivo << "): " << e.what() << "\n";
+        return 2;
+    }
+    if (!fase_arquivo.empty()) {
+        std::cout << "[ENGINE] Modo fase: " << fase_json.value("id", std::string("?")) << "\n";
+    }
+    arena->run();
 
     return 0;
 }

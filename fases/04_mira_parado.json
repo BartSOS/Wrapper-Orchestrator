@@ -3,14 +3,12 @@
   "ordem": 4,
   "bloco": "mira",
   "titulo": "Acertar alvos parados",
-  "conceito": "turret_angle absoluto, recarga (cooldown) e energia para atirar",
-  "texto": "Três alvos estão parados pela arena. Destrua todos: um tiro certeiro basta para cada um. O seu tanque pode ficar parado no centro.\n\nOs alvos são tanques que não se mexem nem atiram de volta. Eles aparecem em estado[\"enemies\"], como adversários comuns, e somem da lista quando são destruídos. As posições mudam a cada tentativa.\n\nA torre gira independente do chassi e vai na hora para o ângulo que você mandar em turret_angle. Esse ângulo é absoluto: é a direção na arena, em graus, e não depende de para onde o chassi aponta.\n\nO tiro só sai com shoot verdadeiro, cooldown igual a 0 e pelo menos 20 de energia. Cada tiro gasta 20 de energia e espera 1 segundo (10 ticks) de recarga; a energia volta devagar (5 por segundo). Tiro desperdiçado custa tempo.",
+  "conceito": "turret_angle absoluto, recarga e energia",
+  "texto": "Destrua os 3 alvos parados (um tiro em cada). Eles aparecem em estado[\"enemies\"].",
   "dicas": [
-    "Aponte a torre com turret_angle = angulo_para(meu.x, meu.y, alvo.x, alvo.y).",
-    "No mesmo tick em que você manda o turret_angle a torre já está lá: pode atirar junto.",
-    "Só peça shoot quando meu.cooldown for 0 e meu.energy for pelo menos 20; senão o pedido é ignorado.",
-    "O projétil voa 30 unidades por tick. Enquanto ele estiver no ar o alvo ainda aparece na lista; escolha um alvo diferente para o próximo tiro ou espere ele sumir.",
-    "Ângulo em radianos no turret_angle é o erro mais comum desta fase: o tiro sai para um lado qualquer."
+    "turret_angle é a direção absoluta na arena, em graus, e a torre chega lá no mesmo tick.",
+    "O tiro só sai com cooldown 0 e energia de pelo menos 20 (cada tiro gasta 20).",
+    "Enquanto um tiro voa, mire em outro alvo."
   ],
   "ajudantes": ["eu", "inimigos", "angulo_para", "distancia", "montar_acao"],
   "cenario": {
@@ -30,9 +28,9 @@
   "objetivos": [
     {"tipo": "acertar_alvos", "alvos": "todos", "ate_tick": 250}
   ],
-  "estrelas": [
-    {"estrelas": 2, "metrica": "tiros", "max": 5},
-    {"estrelas": 3, "metrica": "tiros", "max": 3},
-    {"estrelas": 3, "metrica": "ticks", "max": 60}
+  "baloes": [
+    {"baloes": 2, "metrica": "tiros", "max": 5},
+    {"baloes": 3, "metrica": "tiros", "max": 3},
+    {"baloes": 3, "metrica": "ticks", "max": 60}
   ]
 }

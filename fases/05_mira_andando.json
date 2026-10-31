@@ -3,13 +3,12 @@
   "ordem": 5,
   "bloco": "mira",
   "titulo": "Acertar alvos andando",
-  "conceito": "chassi e torre independentes: andar e mirar no mesmo tick",
-  "texto": "Atravesse a arena até o ponto B e, no caminho, destrua os cinco alvos. As duas coisas têm o mesmo prazo, e ele é curto: não dá tempo de parar, atirar em todos e só depois andar.\n\nO chassi (throttle e turn) e a torre (turret_angle) são independentes. No mesmo tick, o chassi pode apontar para o ponto B enquanto a torre aponta para um alvo do lado.\n\nOs alvos aparecem em estado[\"enemies\"] e o ponto B em estado[\"objetivo\"][\"pontos\"]. As posições mudam a cada tentativa.\n\nA energia é justa: 100 no começo, 20 por tiro e só 5 por segundo de volta. Errar um tiro custa uns 4 segundos de espera para juntar energia de novo.",
+  "conceito": "chassi e torre independentes",
+  "texto": "Chegue ao ponto B e destrua os 5 alvos no caminho, no mesmo prazo. Não dá tempo de parar para atirar.",
   "dicas": [
-    "Separe o código em duas partes: uma decide throttle e turn (ir até B, como na fase 1) e outra decide turret_angle e shoot (como na fase 4).",
-    "Os alvos não se mexem: o ângulo da sua posição atual até o alvo continua certo mesmo com o tanque andando.",
-    "Atire no alvo mais perto primeiro: o tiro chega antes e sobra tempo para corrigir um erro.",
-    "Guarde os ids dos alvos em que você já atirou e que ainda estão na lista, para não gastar dois tiros no mesmo alvo."
+    "throttle e turn movem o chassi; turret_angle e shoot cuidam da torre, no mesmo tick.",
+    "Os alvos não se mexem: mire da sua posição atual.",
+    "A energia é justa: um tiro errado custa uns 4 segundos de espera."
   ],
   "ajudantes": ["eu", "inimigos", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
   "cenario": {
@@ -34,9 +33,9 @@
     {"tipo": "chegar", "ponto": "B", "ate_tick": 190},
     {"tipo": "acertar_alvos", "alvos": "todos", "ate_tick": 190}
   ],
-  "estrelas": [
-    {"estrelas": 2, "metrica": "tiros", "max": 7},
-    {"estrelas": 3, "metrica": "tiros", "max": 5},
-    {"estrelas": 3, "metrica": "ticks", "max": 170}
+  "baloes": [
+    {"baloes": 2, "metrica": "tiros", "max": 6},
+    {"baloes": 3, "metrica": "tiros", "max": 5},
+    {"baloes": 3, "metrica": "ticks", "max": 170}
   ]
 }

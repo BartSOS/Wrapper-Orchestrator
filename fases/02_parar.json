@@ -3,20 +3,19 @@
   "ordem": 2,
   "bloco": "movimento",
   "titulo": "Parar dentro do raio",
-  "conceito": "desacelerar perto do alvo e não passar do ponto",
-  "texto": "Agora não basta passar pelo ponto B: o tanque precisa parar dentro dele e ficar lá por 20 ticks seguidos (2 segundos).\n\nO raio do ponto é pequeno (15 unidades). Um tanque que chega com o throttle no máximo passa do ponto, tenta voltar fazendo uma curva e fica rodando em volta dele sem nunca ficar parado lá dentro.\n\nNa arena, a velocidade muda na hora: com throttle 0 o tanque para no mesmo tick, e com throttle 0.2 ele anda só 1 unidade por tick. Use a distância até o ponto para decidir quando reduzir.\n\nComo na fase anterior, a posição do ponto muda a cada tentativa: leia estado[\"objetivo\"][\"pontos\"].",
+  "conceito": "desacelerar e parar no ponto",
+  "texto": "Pare dentro do ponto B (até 10 unidades do centro) e fique lá 20 ticks seguidos.",
   "dicas": [
-    "distancia(meu.x, meu.y, ponto_x, ponto_y) diz quanto falta.",
-    "Com throttle 1 o tanque anda 5 unidades por tick. Se faltar menos que isso, um throttle menor (distância dividida por 5) chega sem passar.",
-    "Já dentro do raio, mande throttle 0 e turn 0 e espere.",
-    "Se o chassi ainda não aponta para o ponto, gire antes de acelerar: andar torto é o jeito mais comum de passar do ponto."
+    "Andando sempre com throttle 1 o tanque passa do ponto e fica rodando em volta dele.",
+    "A velocidade muda na hora: throttle 0 para no mesmo tick.",
+    "Se faltar menos de 5 unidades, use throttle = distância / 5."
   ],
   "ajudantes": ["eu", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
   "cenario": {
     "max_ticks": 400,
     "jogador": {"x": 150, "y": [400, 600], "angulo": [0, 360], "hp": 100, "energia": 100},
     "pontos": [
-      {"id": "B", "x": [600, 750], "y": [300, 700], "raio": 15}
+      {"id": "B", "x": [600, 750], "y": [300, 700], "raio": 10}
     ],
     "alvos": [],
     "artilharia": [],
@@ -27,8 +26,8 @@
   "objetivos": [
     {"tipo": "ficar_no_raio", "ponto": "B", "ticks_seguidos": 20, "ate_tick": 360}
   ],
-  "estrelas": [
-    {"estrelas": 2, "metrica": "ticks", "max": 260},
-    {"estrelas": 3, "metrica": "ticks", "max": 190}
+  "baloes": [
+    {"baloes": 2, "metrica": "ticks", "max": 260},
+    {"baloes": 3, "metrica": "ticks", "max": 190}
   ]
 }

@@ -1,0 +1,37 @@
+{
+  "id": "03_percurso",
+  "ordem": 3,
+  "bloco": "movimento",
+  "titulo": "Percorrer pontos em ordem",
+  "conceito": "guardar estado entre ticks (qual é o próximo ponto)",
+  "texto": "Há quatro pontos na arena: P1, P2, P3 e P4. Passe por todos, nessa ordem. Passar por um ponto fora da vez não conta: ele só vale quando for o próximo da lista.\n\nO estado traz sempre os quatro pontos, na ordem, em estado[\"objetivo\"][\"pontos\"], mas não diz por quais você já passou. O seu bot precisa lembrar disso sozinho, de um tick para o outro.\n\nA função pensar é chamada uma vez por tick. Variáveis locais dela são perdidas quando ela termina; para guardar o progresso, use uma variável que viva fora da função (global em Python e C, campo da classe em Java, variável estática ou global em C++).\n\nUm ponto conta como visitado quando o centro do tanque fica a uma distância dele menor ou igual ao raio. Não precisa parar em cima dele.",
+  "dicas": [
+    "Guarde o índice do próximo ponto (começa em 0). Quando chegar nele, some 1.",
+    "Não procure o ponto mais perto: a ordem dos pontos foi escolhida para que o mais perto quase nunca seja o próximo.",
+    "Quando o índice passar do último ponto, o percurso acabou; pode parar o tanque.",
+    "Reaproveite a função de andar até um ponto da fase 1: aqui ela só recebe um ponto diferente a cada trecho."
+  ],
+  "ajudantes": ["eu", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "cenario": {
+    "max_ticks": 750,
+    "jogador": {"x": [100, 200], "y": [150, 250], "angulo": [0, 360], "hp": 100, "energia": 100},
+    "pontos": [
+      {"id": "P1", "x": [650, 750], "y": [650, 750], "raio": 30},
+      {"id": "P2", "x": [650, 750], "y": [200, 300], "raio": 30},
+      {"id": "P3", "x": [200, 300], "y": [650, 750], "raio": 30},
+      {"id": "P4", "x": [425, 575], "y": [425, 575], "raio": 30}
+    ],
+    "alvos": [],
+    "artilharia": [],
+    "laser": false,
+    "itens": false,
+    "zona": false
+  },
+  "objetivos": [
+    {"tipo": "visitar_em_ordem", "pontos": ["P1", "P2", "P3", "P4"], "ate_tick": 700}
+  ],
+  "estrelas": [
+    {"estrelas": 2, "metrica": "ticks", "max": 580},
+    {"estrelas": 3, "metrica": "ticks", "max": 480}
+  ]
+}

@@ -30,6 +30,8 @@ extern "C" {   /* permite que o wrapper interno (C++) chame pensar() */
 #define MAX_INIMIGOS 32   /* adversários vivos (a arena comporta até 20 bots) */
 #define MAX_HAZARDS  64   /* perigos ativos; excedentes são descartados       */
 #define MAX_ITENS    64   /* itens no mapa;  excedentes são descartados       */
+#define MAX_PONTOS   16   /* pontos do objetivo (só nas fases de treino)      */
+#define TAM_ID_PONTO 16   /* id do ponto ("B", "P1"...), com o '\0' final      */
 
 /* Seu próprio tanque */
 typedef struct {
@@ -73,6 +75,14 @@ typedef struct {
     double   x, y;
 } Item;
 
+/* Ponto do objetivo de uma fase de treino ("chegue ao ponto B").
+ * Marcador: não colide, não aparece em inimigos. */
+typedef struct {
+    char   id[TAM_ID_PONTO];  /* nome do ponto, igual ao do texto da fase */
+    double x, y;
+    double raio;              /* conta como "chegou" dentro deste raio    */
+} Ponto;
+
 /* Estado da arena recebido a cada tick */
 typedef struct {
     int     tick;
@@ -83,6 +93,10 @@ typedef struct {
     Hazard  hazards[MAX_HAZARDS];
     int     n_itens;
     Item    itens[MAX_ITENS];
+    /* Fases de treino: pontos do objetivo, na ordem do arquivo da fase.
+     * No torneio n_pontos é sempre 0. */
+    int     n_pontos;
+    Ponto   pontos[MAX_PONTOS];
 } Estado;
 
 /* Ação devolvida a cada tick */

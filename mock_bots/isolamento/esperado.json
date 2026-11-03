@@ -1,0 +1,30 @@
+{
+  "fork_bomb": {
+    "descricao": "Tenta criar 256 processos no tick 0; o ulimit -u do bot (TOPCOM_BOT_MAX_PROC) deve recusar o fork antes.",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU fork_bomb"
+  },
+  "ler_private": {
+    "descricao": "Tenta ler /var/www/boca/src/private/conf.php e qualquer arquivo sob /var/www; o executor não tem o private/ nem o código do BOCA.",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU ler_private"
+  },
+  "rede": {
+    "descricao": "Tenta TCP em boca-db:5432, 127.0.0.1:80 e 8.8.8.8:53; o executor roda sem rede (network_mode: none).",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU rede"
+  },
+  "ler_outro_bot": {
+    "descricao": "Procura arquivos de outros bots (caminhos do /proc/<pid>/cmdline, cwd/environ/fd dos outros processos, subindo de .. até 5 níveis e submissoes/); cada bot tem uid e diretório 0700 próprios.",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU ler_outro_bot"
+  },
+  "matar_outro_bot": {
+    "descricao": "Testa os.kill(pid, 0) em todo processo que não é dele nem da engine e manda SIGKILL nos outros bots que aceitarem; com uid próprio todos devem dar EPERM.",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU matar_outro_bot"
+  },
+  "ler_fila": {
+    "descricao": "Tenta listar e gravar em /fila e /var/www/boca/arena; a fila é 0770 do uid 33 e o bot tem outro uid.",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU ler_fila"
+  },
+  "encher_disco": {
+    "descricao": "Grava arquivos de 32 MB em HOME, TMPDIR e cwd até erro ou 3 GB e apaga tudo; falha se gravar 1 GB ou mais. No modo isolado o vigia do script.sh encerra o bot ao passar de TOPCOM_BOT_MAX_DISCO_MB (sem linha ISOLAMENTO no stderr; o log mostra '[ISOLAMENTO] uid ...: ... passou do limite').",
+    "sinal_de_falha": "ISOLAMENTO-FALHOU encher_disco"
+  }
+}

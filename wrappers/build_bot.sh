@@ -41,6 +41,10 @@ DIR_ROOT="$(cd "${DIR_WRAPPERS}/.." && pwd)"
 DIR_PREBUILT="${TOPCOM_WRAPPERS_BUILD:-${DIR_ROOT}/build/wrappers}"
 NLOHMANN_INC="${DIR_ROOT}/engine"
 GSON_JAR="${DIR_ROOT}/libs/gson-2.10.1.jar"
+# Temporários no TMPDIR (o modo isolado do script.sh dá um tmp/ próprio a cada bot); sem ele, /tmp
+DIR_TMP="${TMPDIR:-/tmp}"
+DIR_TMP="${DIR_TMP%/}"
+[[ -n "${DIR_TMP}" && -d "${DIR_TMP}" && -w "${DIR_TMP}" ]] || DIR_TMP="/tmp"
 
 CXX_FLAGS=(-O2 -std=c++20)
 CC_FLAGS=(-O2 -std=c99)
@@ -82,7 +86,7 @@ dir_cache_gravavel() {
         return
     fi
     local tmp
-    tmp="$(mktemp -d /tmp/gamejam_wrappers_XXXXXX)"
+    tmp="$(mktemp -d "${DIR_TMP}/gamejam_wrappers_XXXXXX")"
     TEMPORARIOS+=("$tmp")
     mkdir -p "${tmp}/$1"
     echo "${tmp}/$1"
@@ -160,7 +164,7 @@ EXT=$(echo "$EXT" | tr '[:upper:]' '[:lower:]')
 rm -f "${EXE_FILE}"
 
 # Log da compilação (stdout + stderr dos compiladores)
-LOG_COMPILACAO="$(mktemp /tmp/gamejam_build_XXXXXX.log)"
+LOG_COMPILACAO="$(mktemp "${DIR_TMP}/gamejam_build_XXXXXX.log")"
 TEMPORARIOS+=("${LOG_COMPILACAO}")
 DIR_FONTE="$(cd "$(dirname "${SOURCE_FILE}")" && pwd)"
 
@@ -206,7 +210,7 @@ falhar_compilacao() {
         echo "ERRO DE VALIDACAO: ${amigavel}" >&2
     else
         echo "ERRO DE COMPILACAO: o compilador recusou o seu codigo." >&2
-        sed -e "s#${DIR_FONTE}/##g" -e 's#/tmp/java_build_[A-Za-z0-9]*/##g' "${LOG_COMPILACAO}" >&2
+        sed -e "s#${DIR_FONTE}/##g" -e "s#${DIR_TMP}/java_build_[A-Za-z0-9]*/##g" "${LOG_COMPILACAO}" >&2
     fi
     exit 1
 }
@@ -214,7 +218,7 @@ falhar_compilacao() {
 # Avisos do compilador numa compilação que deu certo
 mostrar_avisos() {
     if [[ -s "${LOG_COMPILACAO}" ]]; then
-        sed -e "s#${DIR_FONTE}/##g" -e 's#/tmp/java_build_[A-Za-z0-9]*/##g' "${LOG_COMPILACAO}" >&2
+        sed -e "s#${DIR_FONTE}/##g" -e "s#${DIR_TMP}/java_build_[A-Za-z0-9]*/##g" "${LOG_COMPILACAO}" >&2
     fi
 }
 
@@ -274,7 +278,7 @@ case "$EXT" in
         CLASS_NAME="$(cat "${LOG_COMPILACAO}.classe")"
 
         WRAPPER_SRC="${DIR_WRAPPERS}/wrapper.java"
-        BUILD_TMP="$(mktemp -d /tmp/java_build_XXXXXX)"
+        BUILD_TMP="$(mktemp -d "${DIR_TMP}/java_build_XXXXXX")"
         TEMPORARIOS+=("${BUILD_TMP}")
 
         cp "$SOURCE_FILE" "${BUILD_TMP}/${CLASS_NAME}.java"

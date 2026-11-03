@@ -1200,7 +1200,8 @@ except Exception as e:
 veredito = "PASSOU" if r.get("passou") else "NAO PASSOU"
 print(f"  Fase {r.get('fase')}: {veredito} | balões {r.get('baloes')} | {r.get('motivo', '')}")
 EOF
-    # fase.pontos[].consumido_tick no replay: tick em que o ponto passou a contar (null = nunca),
+    # fase.pontos[].consumido_tick no replay: tick em que o ponto passou a contar (-1 = nunca; sem null,
+    # que o JsonUtility da Unity não lê num int),
     # para o visualizador esconder o ponto a partir dali
     python3 - "${saida}" "${DIR_ROOT}/match_frames.json" << 'EOF' || true
 import json, os, sys
@@ -1211,7 +1212,7 @@ try:
     consumidos = r.get("pontos_consumidos") or {}
     pontos = (replay.get("fase") or {}).get("pontos") or []
     for p in pontos:
-        p["consumido_tick"] = consumidos.get(p.get("id"))
+        p["consumido_tick"] = consumidos.get(p.get("id"), -1)
     if pontos:
         tmp = sys.argv[2] + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

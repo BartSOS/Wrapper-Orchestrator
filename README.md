@@ -31,6 +31,7 @@ Documentos para as equipes: o enunciado do Desafio (fonte em `Boca-Game-Jam-Pet/
 | `TOPCOM_TIMEOUT_PARTIDA` | calculado | Orçamento de tempo real da partida, em segundos (seção 3). Sobrepõe o cálculo; só para ensaios. |
 | `TOPCOM_FASE` | — | Caminho do JSON de uma fase de treino (`fases/<id>.json`). Liga o **modo fase** (seção 1.2). |
 | `TOPCOM_FASE_SEED` | sorteada | Seed do modo fase (0 a 4294967295): sorteia as faixas `[min, max]` do cenário e os hazards. |
+| `TOPCOM_BOT_UID_BASE` e afins | — | Modo isolado do executor da arena (seção 1.3). |
 
 O `EngineExecutionService.php` passa um ambiente fixo ao `proc_open`, que já inclui `TOPCOM_SEED` (sorteada pelo BOCA para cada partida e gravada no resultado), `TOPCOM_MAX_BOTS` (20, item 7.8) e `TOPCOM_COMPILE_JOBS` (se definido no servidor). Para reproduzir uma partida do BOCA, use a `seed` do `match_frames.json` com `gerenciar_engine.py --testar --seed X`.
 
@@ -109,6 +110,26 @@ Com artilharia programada, a aleatória fica desligada. Com só artilharia ou s�
 - **Estado do bot:** ganha `"objetivo": {"pontos": [{"id": "B", "x": 800.0, "y": 512.3, "raio": 25.0}]}`, na ordem do arquivo. Em C: `e->n_pontos` e `e->pontos[i]` (`Ponto`: `id`, `x`, `y`, `raio`; `MAX_PONTOS` 16). No torneio a chave não existe e `n_pontos` é 0.
 - **`match_frames.json`:** o bloco `fase` é a primeira chave, com o cenário sorteado: `{id, seed, max_ticks, jogador, pontos[{id, ordem, x, y, raio}], alvos[{id, tank_id, x, y, hp, angulo}], artilharia, laser, itens, zona}`. Na artilharia programada, cada item traz `{tick, x, y, raio, criada}` (e `no_jogador: true`, com x/y efetivos ou `null` se não chegou a cair). Os alvos aparecem em `frames[].tanks` com `"alvo": true`, e `bots[]` só tem o jogador. O que a Unity desenha: `Boca-Game-Jam-Pet/desafio/VISUALIZADOR_WEB.md`, seção "Bloco fase".
 - **Teste:** `python3 mock_bots/treino_engine/testar_modo_fase.py` (WSL) roda os cenários de `mock_bots/treino_engine/` com bots nas 4 linguagens numa cópia em `/tmp/frente_engine/modo_fase` e confere tudo isso.
+
+## 1.3 Isolamento (modo arena)
+
+No evento, as partidas rodam no executor `boca-arena` (sem rede, sem `private/`), que chama o `script.sh` como root com `TOPCOM_BOT_UID_BASE`. Sem essa variável nada muda: uid único, `/tmp` comum, stderr dos bots descartado, mesmo `match_frames.json` para a mesma seed.
+
+| Variável | Padrão | Efeito (só com `TOPCOM_BOT_UID_BASE`) |
+| :--- | :--- | :--- |
+| `TOPCOM_BOT_UID_BASE` | — | Liga o modo. O bot `i` (0-based na ordem dos slots, NPCs incluídos) usa uid = gid = `BASE + i`. Exige root e `setpriv`; valor inválido aborta a partida. |
+| `TOPCOM_BOT_MAX_PROC` | 64 | `ulimit -u` de cada bot na partida (a JVM cabe). A compilação usa 256. |
+| `TOPCOM_BOT_MAX_DISCO_MB` | 256 | Disco por bot (diretório próprio + `/tmp`, `/var/tmp`, `/dev/shm`...); também é o `ulimit -f`. |
+| `TOPCOM_BOT_MAX_ARQUIVOS` | 2000 | Arquivos por bot. |
+
+O que muda:
+- **Compilação e execução com o uid do bot:** `setpriv --reuid=U --regid=U --clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all` (sem `CAP_SETPCAP`, sai o `--bounding-set`, com aviso). A engine, o `avaliar_fase` e o resto do script continuam como root.
+- **Diretório próprio:** `build/bots/t<N>/` (dono do bot, 0700) com a cópia do fonte, o binário `bot`, `home/` e `tmp/` (`HOME` e `TMPDIR`), e `umask 077`. O cwd do bot é esse diretório. O `build_bot.sh` grava os temporários no `TMPDIR`.
+- **Permissões:** os bots só leem `wrappers/`, `libs/`, `engine/nlohmann/` e `build/wrappers/`. Submissões, fontes da engine, fases, logs e os diretórios dos outros bots ficam fechados (0700/0711).
+- **Limites:** `ulimit -u`, `-v` (o de sempre), `-f` e o `timeout` de sempre. Um vigia (a cada 0,25 s) encerra o bot que passar do disco ou de arquivos e apaga o que ele gravou (`[ISOLAMENTO] uid U: ... passou do limite` no log).
+- **Limpeza por uid:** no início, depois da compilação e no fim, todo processo dos uids dos bots é encerrado (`kill -KILL -1` como o próprio uid, contra fork bomb e processos com `setsid`) e seus arquivos em `/tmp`, `/var/tmp`, `/dev/shm`... são apagados. `build/bots/` é apagado no fim.
+- **stderr dos bots:** vai para `build/logs/<bot>.stderr` (primeiros 64 KB); linhas `ISOLAMENTO-OK|FALHOU <caso>` aparecem no log como `[ISOLAMENTO] <bot>: ...`.
+- **Teste:** bots de ataque em `mock_bots/isolamento/` (ver `LEIA.md`); o BOCA os roda com a skill `boca-arena` (`--testar-isolamento`).
 
 ---
 
@@ -254,6 +275,7 @@ battle-orchestrator/
 │   ├── bots-base/         # Conjunto canônico de bots de exemplo (testes, benchmark e checkpoint inicial)
 │   ├── intermediarios/    # Bots de teste válidos e com erro (python3, c++20, java, c)
 │   ├── treino_engine/     # Cenários e bots de teste do modo fase + testar_modo_fase.py
+│   ├── isolamento/        # Bots de ataque do teste do executor isolado (LEIA.md, esperado.json)
 │   └── malicious_bots/    # fork_bomb, infinite_memory, file_system_hacker, system_call.c
 ├── submissoes/            # Entrada da partida (conteúdo ignorado pelo git)
 └── build/, replays/       # Saídas geradas (ignoradas pelo git): build/engine, build/wrappers/, build/bots/, build/logs/

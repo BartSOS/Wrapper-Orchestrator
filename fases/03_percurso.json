@@ -30,7 +30,7 @@
     {"tipo": "visitar_em_ordem", "pontos": ["P1", "P2", "P3", "P4"], "ate_tick": 750}
   ],
   "baloes": [
-    {"baloes": 2, "metrica": "ticks", "max": 590},
-    {"baloes": 3, "metrica": "ticks", "max": 520}
+    {"baloes": 2, "metrica": "ticks", "max": 640},
+    {"baloes": 3, "metrica": "ticks", "max": 560}
   ]
 }

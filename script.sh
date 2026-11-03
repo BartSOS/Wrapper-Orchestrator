@@ -1200,6 +1200,26 @@ except Exception as e:
 veredito = "PASSOU" if r.get("passou") else "NAO PASSOU"
 print(f"  Fase {r.get('fase')}: {veredito} | balões {r.get('baloes')} | {r.get('motivo', '')}")
 EOF
+    # fase.pontos[].consumido_tick no replay: tick em que o ponto passou a contar (null = nunca),
+    # para o visualizador esconder o ponto a partir dali
+    python3 - "${saida}" "${DIR_ROOT}/match_frames.json" << 'EOF' || true
+import json, os, sys
+try:
+    r = json.load(open(sys.argv[1], encoding="utf-8"))
+    with open(sys.argv[2], encoding="utf-8") as f:
+        replay = json.load(f)
+    consumidos = r.get("pontos_consumidos") or {}
+    pontos = (replay.get("fase") or {}).get("pontos") or []
+    for p in pontos:
+        p["consumido_tick"] = consumidos.get(p.get("id"))
+    if pontos:
+        tmp = sys.argv[2] + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(replay, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, sys.argv[2])
+except Exception as e:
+    print(f"  [AVISO] consumido_tick nao anotado no replay: {e}")
+EOF
     echo -e "${TAG_OK} Resultado da fase gravado em: ${saida}"
 }
 

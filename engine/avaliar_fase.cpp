@@ -4,7 +4,11 @@
 // Uso:  avaliar_fase <fase.json> <match_frames.json>
 // Saída (stdout): um JSON com o veredito da tentativa:
 //   {"fase", "passou", "baloes", "motivo", "metricas": {ticks, tiros, vida, dano_recebido},
-//    "objetivos": [{"tipo", "ok", "detalhe"}], "proximo_balao", "tick_final", "seed"}
+//    "objetivos": [{"tipo", "ok", "detalhe"}], "proximo_balao", "tick_final", "seed",
+//    "pontos_consumidos": {"<id do ponto>": tick}}
+// pontos_consumidos: tick em que cada ponto passou a contar (chegar: a entrada no raio; ficar_no_raio:
+// o último dos ticks seguidos; visitar_em_ordem: a entrada na vez dele). Ponto que não contou fica de
+// fora. O script.sh copia esse tick para fase.pontos[].consumido_tick do replay (o visualizador o esconde).
 // Código de saída: 0 quando avaliou (passou ou não); 2 quando a entrada é inválida
 // (arquivo ausente, JSON quebrado, tipo de objetivo ou métrica desconhecidos, ponto/alvo
 // que o replay não traz). Nesse caso o stdout traz {"fase", "erro"} e o stderr a mensagem.
@@ -169,6 +173,7 @@ public:
             saida["proximo_balao"] = "1 balão: cumprir os objetivos da fase.";
             saida["tick_final"] = tickFinal();
             if (seed_) saida["seed"] = *seed_;
+            saida["pontos_consumidos"] = json::object();
             return saida;
         }
 
@@ -233,6 +238,8 @@ public:
         saida["proximo_balao"] = proxima.empty() ? json(nullptr) : json(proxima);
         saida["tick_final"] = tickFinal();
         if (seed_) saida["seed"] = *seed_;
+        saida["pontos_consumidos"] = json::object();
+        for (const auto& [pid, t] : consumidos_) saida["pontos_consumidos"][pid] = t;
         return saida;
     }
 
@@ -243,6 +250,7 @@ private:
     const json& replay_;
     std::string id_;
     std::map<std::string, Ponto> pontos_;
+    std::map<std::string, int> consumidos_;              // ponto -> tick em que passou a contar
     std::vector<std::string> ordemPontos_;
     std::map<std::string, Alvo> alvos_;
     std::vector<std::string> ordemAlvos_;
@@ -567,6 +575,12 @@ private:
         return sobreviver(o);
     }
 
+    // O mesmo ponto em dois objetivos: vale o primeiro tick em que contou.
+    void consumir(const std::string& id, int tick) {
+        auto it = consumidos_.find(id);
+        if (it == consumidos_.end() || tick < it->second) consumidos_[id] = tick;
+    }
+
     ResultadoObjetivo chegar(const json& o) {
         ResultadoObjetivo r{"chegar"};
         const Ponto& p = pontos_.at(o["ponto"].get<std::string>());
@@ -588,6 +602,7 @@ private:
         if (tickEntrada >= 0 && tickEntrada <= lim) {
             r.ok = true;
             r.tick = tickEntrada;
+            consumir(p.id, tickEntrada);
             r.detalhe = "ponto " + p.id + " no tick " + std::to_string(tickEntrada) + lim_s;
             r.motivo = "Chegou ao ponto " + p.id + " no tick " + std::to_string(tickEntrada) + ".";
         } else if (tickEntrada >= 0) {
@@ -633,6 +648,7 @@ private:
                 if (seguidos >= precisa) {
                     r.ok = true;
                     r.tick = q.tick;
+                    consumir(p.id, q.tick);
                     return false;
                 }
             } else {
@@ -690,6 +706,7 @@ private:
             if (d < m.d) m = {d, q.tick, q.x, q.y};
             if (d <= alvo.raio) {
                 ticks.push_back(q.tick);
+                consumir(alvo.id, q.tick);
                 prox++;
                 m = MaisPerto{};
                 if (prox == ids.size()) {

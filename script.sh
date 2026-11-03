@@ -10,6 +10,11 @@
 #   TOPCOM_COMPILE_JOBS   compilações simultâneas (padrão: min(nproc, memória disponível / 500 MB))
 #   TOPCOM_FASE           (fases de treino) caminho do JSON da fase: liga o modo fase
 #   TOPCOM_FASE_SEED      (fases de treino) seed do sorteio do cenário (0 a 4294967295)
+#   TOPCOM_BOT_UID_BASE   (arena) liga o modo isolado: o script roda como root e cada bot
+#                         compila e joga com uid/gid próprio (ver "Modo isolado" abaixo)
+#   TOPCOM_BOT_MAX_PROC   (modo isolado) ulimit -u de cada bot na partida (padrão 64)
+#   TOPCOM_BOT_MAX_DISCO_MB (modo isolado) disco por bot, em MB (padrão 256)
+#   TOPCOM_BOT_MAX_ARQUIVOS (modo isolado) arquivos por bot (padrão 2000)
 # Saída: match_frames.json e replays/partida_<id>.json (seed, bots[], excluidos[], frames)
 #
 # Modo fase (TOPCOM_FASE definida): só 1 bot joga (o primeiro em ordem alfabética), a engine
@@ -18,6 +23,17 @@
 # resultado_fase.json. Se DIR_ENTRADA tiver uma subpasta submissoes/, os bots vêm dela e o
 # resultado_fase.json vai para DIR_ENTRADA; senão os bots vêm de DIR_ENTRADA e o resultado
 # fica ao lado do match_frames.json (raiz do orquestrador). Sem TOPCOM_FASE nada muda.
+#
+# Modo isolado (TOPCOM_BOT_UID_BASE definida; só o executor da arena define): o bot de
+# índice i (0-based, na ordem de NOMES_BOTS, NPCs incluídos) usa uid = gid = BASE + i.
+# Compilação (wrappers/build_bot.sh) e execução passam por setpriv (sem grupos, sem
+# capabilities, no_new_privs), cada bot num diretório próprio build/bots/t<N>/ (dono do
+# bot, 0700, com home/ e tmp/ para HOME e TMPDIR), umask 077, ulimit -u/-v/-f e o timeout
+# de sempre. A engine, o avaliar_fase e o resto do script continuam como root. Um vigia
+# encerra o bot que passar do limite de disco/arquivos; ao terminar, todo processo e
+# arquivo dos uids dos bots é apagado. O stderr de cada bot vai para build/logs/<bot>.stderr
+# (primeiros 64 KB) e as linhas "ISOLAMENTO-OK|FALHOU <caso>" aparecem no log da partida.
+# Sem a variável nada muda (uid único, /tmp comum, stderr dos bots descartado).
 # ==============================================================================
 
 set -euo pipefail
@@ -71,6 +87,36 @@ MAX_BOTS="${TOPCOM_MAX_BOTS:-20}"
 if ! [[ "${MAX_BOTS}" =~ ^[0-9]+$ ]] || [[ "${MAX_BOTS}" -lt 1 ]]; then
     echo "[AVISO] TOPCOM_MAX_BOTS invalido ('${MAX_BOTS}'); usando 20."
     MAX_BOTS=20
+fi
+
+# --- Modo isolado (arena): uid próprio por bot. Valor inválido aborta (nunca roda sem isolar) ---
+ISOLADO=0
+BOT_UID_BASE="${TOPCOM_BOT_UID_BASE:-}"
+BOT_MAX_PROC="${TOPCOM_BOT_MAX_PROC:-64}"
+BOT_MAX_DISCO_MB="${TOPCOM_BOT_MAX_DISCO_MB:-256}"
+BOT_MAX_ARQUIVOS="${TOPCOM_BOT_MAX_ARQUIVOS:-2000}"
+COMPILACAO_MAX_PROC=256       # ulimit -u da compilação (javac e g++ criam várias threads/processos)
+BOT_STDERR_MAX=65536          # bytes do stderr de cada bot copiados para build/logs/<bot>.stderr
+if [[ -n "${BOT_UID_BASE}" ]]; then
+    for _v in BOT_UID_BASE BOT_MAX_PROC BOT_MAX_DISCO_MB BOT_MAX_ARQUIVOS; do
+        if ! [[ "${!_v}" =~ ^[0-9]{1,10}$ ]] || [[ "${!_v}" -lt 1 ]]; then
+            echo "[ERRO] Modo isolado: valor invalido em TOPCOM_${_v} ('${!_v}')."
+            exit 1
+        fi
+    done
+    if [[ "${BOT_UID_BASE}" -lt 1000 || "${BOT_UID_BASE}" -gt 2000000000 ]]; then
+        echo "[ERRO] TOPCOM_BOT_UID_BASE fora do intervalo 1000..2000000000 ('${BOT_UID_BASE}')."
+        exit 1
+    fi
+    if [[ "$(id -u)" -ne 0 ]]; then
+        echo "[ERRO] TOPCOM_BOT_UID_BASE definida, mas o script nao roda como root: o modo isolado exige root."
+        exit 1
+    fi
+    if ! command -v setpriv &> /dev/null; then
+        echo "[ERRO] TOPCOM_BOT_UID_BASE definida, mas o setpriv (util-linux) nao esta instalado."
+        exit 1
+    fi
+    ISOLADO=1
 fi
 
 # --- Modo fase (fases de treino): 1 bot, cenário do arquivo da fase, avaliação no fim ---
@@ -474,10 +520,223 @@ compilar_engine() {
 }
 
 # ==============================================================================
+# 3b. MODO ISOLADO (TOPCOM_BOT_UID_BASE): UID, DIRETÓRIO E LIMITES PRÓPRIOS POR BOT
+# ==============================================================================
+N_UIDS=0                      # uids reservados: BASE .. BASE+N_UIDS-1 (um por candidato compilável)
+VIGIA_PID=""
+DIRS_COMUNS=()                # diretórios graváveis por todos (fora do build/bots) que o vigia e a limpeza olham
+SETPRIV_OPCOES=(--clear-groups --no-new-privs --inh-caps=-all --bounding-set=-all)
+
+# Há processo com uid real $1?
+uid_tem_processos() {
+    if command -v pgrep &> /dev/null; then
+        pgrep -U "$1" > /dev/null 2>&1
+    else
+        awk -v u="$1" '$1 == "Uid:" && $2 == u { achou = 1; exit } END { exit !achou }' /proc/[0-9]*/status 2> /dev/null
+    fi
+}
+
+# Encerra todos os processos do uid $1. "kill -KILL -1" rodando COMO o próprio uid atinge só os
+# processos dele (inclusive os que saíram do grupo com setsid); repete por causa de fork bomb.
+matar_uid() {
+    local u="$1" t
+    for t in 1 2 3 4 5 6 7 8 9 10; do
+        uid_tem_processos "$u" || return 0
+        setpriv --reuid="$u" --regid="$u" --clear-groups bash -c 'kill -KILL -1' > /dev/null 2>&1 || true
+        sleep 0.05
+    done
+    if uid_tem_processos "$u"; then
+        echo -e "  ${TAG_AVISO} Modo isolado: o uid ${u} ainda tem processos depois de 10 tentativas de encerramento."
+    fi
+}
+
+# Apaga os arquivos do uid $1 nos diretórios comuns (/tmp, /var/tmp, /dev/shm...)
+limpar_arquivos_uid() {
+    if [[ ${#DIRS_COMUNS[@]} -gt 0 ]]; then
+        find "${DIRS_COMUNS[@]}" -xdev -mindepth 1 -uid "$1" -delete 2> /dev/null || true
+    fi
+}
+
+# Vigia (segundo plano): soma disco e arquivos de cada uid de bot (build/bots e diretórios comuns);
+# quem passar do limite tem os processos encerrados e os arquivos apagados.
+isolamento_vigia() {
+    set +e
+    trap - EXIT TERM INT
+    local pai="$1"
+    local lim_kb=$(( BOT_MAX_DISCO_MB * 1024 )) umin="${BOT_UID_BASE}" umax=$(( BOT_UID_BASE + N_UIDS - 1 ))
+    local u kb n
+    while kill -0 "${pai}" 2> /dev/null; do
+        while read -r u kb n; do
+            [[ "$u" =~ ^[0-9]+$ ]] || continue
+            matar_uid "$u"
+            find "${DIR_BOTS_BUILD}" -xdev -mindepth 2 -uid "$u" ! -type d -delete 2> /dev/null
+            find "${DIR_BOTS_BUILD}" -xdev -mindepth 3 -uid "$u" -type d -delete 2> /dev/null
+            limpar_arquivos_uid "$u"
+            echo -e "  ${TAG_AVISO} [ISOLAMENTO] uid ${u}: $(( kb / 1024 )) MB em ${n} arquivo(s) passou do limite (${BOT_MAX_DISCO_MB} MB / ${BOT_MAX_ARQUIVOS} arquivos); processos do bot encerrados e arquivos apagados."
+        done < <(find "${DIR_BOTS_BUILD}" ${DIRS_COMUNS[@]+"${DIRS_COMUNS[@]}"} -xdev -printf '%U %k\n' 2> /dev/null \
+                 | awk -v a="${umin}" -v b="${umax}" -v lk="${lim_kb}" -v la="${BOT_MAX_ARQUIVOS}" \
+                       '$1 >= a && $1 <= b { kb[$1] += $2; n[$1]++ }
+                        END { for (u in kb) if (kb[u] > lk || n[u] > la) print u, kb[u], n[u] }')
+        sleep 0.25
+    done
+}
+
+# Permissões para o uid do bot: travessia até a raiz, leitura só do que a compilação usa
+# (wrappers/, libs/, engine/nlohmann/, build/wrappers/); o resto (submissões, fontes da engine,
+# logs, fases, NPCs) fica só para o root.
+isolamento_permissoes() {
+    local a="${DIR_ROOT}" e
+    while [[ "$a" != "/" && -n "$a" ]]; do
+        a="$(dirname "$a")"
+        [[ "$a" == "/" ]] && break
+        if [[ ! -L "$a" ]] && (( (8#$(stat -c '%a' "$a") & 1) == 0 )); then
+            chmod o+x -- "$a"
+        fi
+    done
+    chmod 0711 -- "${DIR_ROOT}"
+    for e in "${DIR_ROOT}"/* "${DIR_ROOT}"/.[!.]* "${DIR_ROOT}"/..?*; do
+        [[ -e "$e" && ! -L "$e" ]] || continue
+        case "${e##*/}" in
+            wrappers|libs) chmod -R a+rX,go-w -- "$e" ;;
+            engine|build) chmod 0711 -- "$e" ;;
+            *) chmod go-rwx -- "$e" ;;
+        esac
+    done
+    for e in "${DIR_ROOT}/engine"/*; do
+        [[ -e "$e" && ! -L "$e" ]] || continue
+        if [[ "${e##*/}" == "nlohmann" ]]; then chmod -R a+rX,go-w -- "$e"; else chmod go-rwx -- "$e"; fi
+    done
+    for e in "${DIR_BUILD}"/*; do
+        [[ -e "$e" && ! -L "$e" ]] || continue
+        case "${e##*/}" in
+            wrappers) chmod -R a+rX,go-w -- "$e" ;;
+            bots) chmod 0711 -- "$e" ;;
+            *) chmod go-rwx -- "$e" ;;
+        esac
+    done
+    if [[ -d "${DIR_INPUT}" && ! -L "${DIR_INPUT}" ]]; then
+        chmod go-rwx -- "${DIR_INPUT}"
+    fi
+}
+
+isolamento_preparar() {
+    [[ ${ISOLADO} -eq 1 ]] || return 0
+    N_UIDS=${#CAND_VALIDOS[@]}
+    [[ ${N_UIDS} -ge 1 ]] || N_UIDS=1
+    local d u
+    for d in /tmp /var/tmp /dev/shm /run/lock /var/lib/php/sessions; do
+        if [[ -d "$d" && ! -L "$d" ]]; then DIRS_COMUNS+=("$d"); fi
+    done
+    echo -e "  ${TAG_INFO} Modo isolado: uids ${BOT_UID_BASE}..$(( BOT_UID_BASE + N_UIDS - 1 )), ulimit -u ${BOT_MAX_PROC}, ${BOT_MAX_DISCO_MB} MB e ${BOT_MAX_ARQUIVOS} arquivos por bot"
+
+    # O setpriv precisa trocar de uid (CAP_SETUID/CAP_SETGID). --bounding-set pede CAP_SETPCAP: sem ela,
+    # segue sem esvaziar o bounding set (com no_new_privs e uid sem privilégio ele não dá nada ao bot).
+    if ! setpriv --reuid="${BOT_UID_BASE}" --regid="${BOT_UID_BASE}" "${SETPRIV_OPCOES[@]}" true 2> "${DIR_LOGS}/_setpriv.log"; then
+        local sem_bounding=(--clear-groups --no-new-privs --inh-caps=-all)
+        if grep -q "bounding set" "${DIR_LOGS}/_setpriv.log" 2> /dev/null \
+           && setpriv --reuid="${BOT_UID_BASE}" --regid="${BOT_UID_BASE}" "${sem_bounding[@]}" true 2>> "${DIR_LOGS}/_setpriv.log"; then
+            SETPRIV_OPCOES=("${sem_bounding[@]}")
+            echo -e "  ${TAG_AVISO} Modo isolado: sem CAP_SETPCAP o bounding set dos bots nao e esvaziado (uid proprio e no_new_privs continuam)."
+        else
+            echo -e "${TAG_ERRO} Modo isolado: o setpriv falhou ($(head -n 1 "${DIR_LOGS}/_setpriv.log" 2>/dev/null)). Partida abortada."
+            exit 1
+        fi
+    fi
+
+    trap isolamento_encerrar EXIT
+    trap 'exit 143' TERM
+    trap 'exit 130' INT
+    # Sobras de uma execução anterior na mesma réplica (os uids se repetem entre pedidos)
+    for ((u=BOT_UID_BASE; u<BOT_UID_BASE+N_UIDS; u++)); do
+        matar_uid "$u"
+        limpar_arquivos_uid "$u"
+    done
+    isolamento_permissoes
+    rm -rf -- "${DIR_BOTS_BUILD:?}"
+    mkdir -p "${DIR_BOTS_BUILD}"
+    chmod 0711 -- "${DIR_BOTS_BUILD}"
+    # Vigia fora dos jobs do script (subshell dupla): o "wait" do pool de compilação não o espera.
+    # Fica no grupo de processos do script (o executor derruba o grupo) e sai sozinho se o script sumir.
+    local arq_pid="${DIR_BUILD}/.vigia.pid"
+    rm -f -- "${arq_pid}"
+    ( isolamento_vigia "$$" & echo "$!" > "${arq_pid}" )
+    VIGIA_PID="$(cat "${arq_pid}" 2> /dev/null || true)"
+    rm -f -- "${arq_pid}"
+}
+
+# Fim do script (EXIT): para o vigia, encerra processos e apaga arquivos de todos os uids dos bots
+isolamento_encerrar() {
+    local rc=$?
+    set +e
+    trap - EXIT
+    if [[ "${VIGIA_PID}" =~ ^[0-9]+$ ]]; then
+        kill "${VIGIA_PID}" 2> /dev/null
+        local t
+        for t in 1 2 3 4 5 6 7 8 9 10; do
+            kill -0 "${VIGIA_PID}" 2> /dev/null || break
+            sleep 0.05
+        done
+        VIGIA_PID=""
+    fi
+    local u
+    for ((u=BOT_UID_BASE; u<BOT_UID_BASE+N_UIDS; u++)); do
+        matar_uid "$u"
+        limpar_arquivos_uid "$u"
+    done
+    rm -rf -- "${DIR_BOTS_BUILD:?}"
+    exit "${rc}"
+}
+
+# Diretório do bot (dono uid $2, 0700) com a cópia do fonte, home/, tmp/ e stderr.log
+preparar_dir_bot() {
+    local d="$1" u="$2" fonte="$3" nome="$4"
+    rm -rf -- "${d:?}"
+    mkdir -m 0700 -- "$d" "$d/home" "$d/tmp"
+    cp -- "${fonte}" "$d/${nome}"
+    : > "$d/stderr.log"
+    chmod 0600 -- "$d/${nome}" "$d/stderr.log"
+    chown -R -h "${u}:${u}" -- "$d"
+}
+
+# Compila como o uid do bot (chamado pelo pool): build_bot.sh <fonte> <saída>
+compilar_como_bot() {
+    local u="$1" d="$2" fonte="$3" saida="$4"
+    (
+        ulimit -u "${COMPILACAO_MAX_PROC}" || exit 1
+        umask 077
+        cd "$d" || exit 1
+        export HOME="$d/home" TMPDIR="$d/tmp"
+        exec setpriv --reuid="$u" --regid="$u" "${SETPRIV_OPCOES[@]}" bash "${BUILD_SCRIPT}" "${fonte}" "${saida}"
+    )
+}
+
+# Depois da partida: encerra os bots e copia o stderr de cada um (primeiros 64 KB) para
+# build/logs/<bot>.stderr; as linhas dos bots de isolamento vão para o log da partida.
+isolamento_relatorio() {
+    [[ ${ISOLADO} -eq 1 ]] || return 0
+    local i d saida linha
+    for ((i=0; i<${#NOMES_BOTS[@]}; i++)); do
+        matar_uid "$(( BOT_UID_BASE + i ))"
+    done
+    for ((i=0; i<${#NOMES_BOTS[@]}; i++)); do
+        d="${DIRS_BOTS[$i]}"
+        saida="${DIR_LOGS}/${NOMES_BOTS[$i]}.stderr"
+        rm -f -- "${saida}"
+        [[ -f "$d/stderr.log" && ! -L "$d/stderr.log" ]] || continue
+        dd if="$d/stderr.log" of="${saida}" iflag=nofollow,count_bytes count="${BOT_STDERR_MAX}" status=none 2> /dev/null || true
+        while IFS= read -r linha; do
+            echo "  [ISOLAMENTO] ${NOMES_BOTS[$i]}: ${linha}"
+        done < <(grep -aE '^ISOLAMENTO-(OK|FALHOU) [a-z_]{1,40}$' "${saida}" 2> /dev/null | head -n 20)
+    done
+}
+
+# ==============================================================================
 # 4. INVENTÁRIO PRÉ-COMPILAÇÃO, COMPILAÇÃO E IAS CONFIRMADAS NA PARTIDA
 # ==============================================================================
 declare -a NOMES_BOTS=()
 declare -a COMANDOS_BOTS=()
+declare -a DIRS_BOTS=()       # modo isolado: diretório de cada bot (paralelo a NOMES_BOTS)
+declare -a CAND_DIR=()        # modo isolado: diretório de compilação de cada candidato
 declare -a ARQS_ENTRARAM=()
 declare -a LANGS_ENTRARAM=()
 
@@ -501,7 +760,12 @@ resumo_erro() {
     resumo="${resumo//"${DIR_INPUT}/"/}"
     resumo="${resumo//"${DIR_BOTS_BUILD}/"/}"
     resumo="${resumo//"${DIR_ROOT}/"/}"
-    echo "$resumo" | sed -E 's#/tmp/java_build_[A-Za-z0-9]+/##g'
+    # java_build_* fica no TMPDIR (/tmp ou, no modo isolado, o tmp/ do bot); t<N>/ é o diretório do bot isolado
+    if [[ ${ISOLADO} -eq 1 ]]; then
+        echo "$resumo" | sed -E -e 's#[^[:space:](]*/java_build_[A-Za-z0-9]+/##g' -e 's#^t[0-9]+/##; s#([[:space:](])t[0-9]+/#\1#g'
+    else
+        echo "$resumo" | sed -E 's#/tmp/java_build_[A-Za-z0-9]+/##g'
+    fi
 }
 
 preparar_bots() {
@@ -546,8 +810,12 @@ preparar_bots() {
         CAND_VALIDOS=()
     fi
     mkdir -p "${DIR_BOTS_BUILD}"
+    if [[ ${ISOLADO} -eq 0 ]]; then
+        # Sobras de uma execução isolada interrompida (build/bots/t<N>/) atrapalhariam o build_bot.sh
+        find "${DIR_BOTS_BUILD}" -mindepth 1 -maxdepth 1 -type d -name 't[0-9]*' -exec rm -rf -- {} + 2> /dev/null || true
+    fi
 
-    local prox=0 lote_n=0
+    local prox=0 lote_n=0 tentativa=0
     local total_validos=${#CAND_VALIDOS[@]}
     while [[ ${#NOMES_BOTS[@]} -lt ${MAX_BOTS} && ${prox} -lt ${total_validos} ]]; do
         local vagas=$(( MAX_BOTS - ${#NOMES_BOTS[@]} ))
@@ -562,6 +830,16 @@ preparar_bots() {
         t_lote="$(date +%s%N)"
         local i
         for i in "${lote[@]}"; do
+            if [[ ${ISOLADO} -eq 1 ]]; then
+                # Modo isolado: cada tentativa de compilação tem uid e diretório próprios
+                local u_c=$(( BOT_UID_BASE + tentativa ))
+                CAND_DIR[$i]="${DIR_BOTS_BUILD}/t${tentativa}"
+                tentativa=$(( tentativa + 1 ))
+                preparar_dir_bot "${CAND_DIR[$i]}" "${u_c}" "${CAND_ARQUIVOS[$i]}" "${CAND_NOMES[$i]}"
+                pool_rodar "${DIR_LOGS}/${CAND_EQUIPES[$i]}.log" \
+                    compilar_como_bot "${u_c}" "${CAND_DIR[$i]}" "${CAND_DIR[$i]}/${CAND_NOMES[$i]}" "${CAND_DIR[$i]}/bot"
+                continue
+            fi
             # Chamado via bash: a permissão +x se perde quando o BOCA extrai o engine.zip
             pool_rodar "${DIR_LOGS}/${CAND_EQUIPES[$i]}.log" \
                 bash "${BUILD_SCRIPT}" "${CAND_ARQUIVOS[$i]}" "${DIR_BOTS_BUILD}/${CAND_EQUIPES[$i]}"
@@ -574,12 +852,18 @@ preparar_bots() {
             local bname="${CAND_NOMES[$i]}"
             local lang_name="${CAND_LANGS[$i]}"
             local bin_out="${DIR_BOTS_BUILD}/${team}"
+            local java_extra=""
+            if [[ ${ISOLADO} -eq 1 ]]; then
+                bin_out="${CAND_DIR[$i]}/bot"
+                # Sem hsperfdata no /tmp comum; temporários do Java no tmp/ do bot
+                java_extra=" -XX:-UsePerfData -Djava.io.tmpdir=\"${CAND_DIR[$i]}/tmp\""
+            fi
             local log_bot="${DIR_LOGS}/${team}.log"
             local cmd_exec=""
             case "${CAND_EXTS[$i]}" in
                 py) cmd_exec="python3 \"${bin_out}\"" ;;
                 cpp|c) cmd_exec="\"${bin_out}\"" ;;
-                java) cmd_exec="java ${JAVA_OPTS_BOT} -jar \"${bin_out}\"" ;;
+                java) cmd_exec="java ${JAVA_OPTS_BOT}${java_extra} -jar \"${bin_out}\"" ;;
             esac
 
             echo -e "  ${TAG_BUILD} [${lang_name}] Compilando equipe '${team}' (${bname})..."
@@ -589,15 +873,30 @@ preparar_bots() {
                 COMANDOS_BOTS+=("${cmd_exec}")
                 ARQS_ENTRARAM+=("$bname")
                 LANGS_ENTRARAM+=("${lang_name}")
+                if [[ ${ISOLADO} -eq 1 ]]; then DIRS_BOTS+=("${CAND_DIR[$i]}"); fi
                 echo -e "    ${TAG_OK} Preparacao '${lang_name}' concluida em $(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s -> ${bin_out}"
             else
                 local err_resumo
                 err_resumo="$(resumo_erro "${log_bot}")"
                 excluir "$team" "Erro de compilacao modular (${err_resumo})"
                 echo -e "    ${TAG_ERRO} Falha na compilacao para '${team}': ${err_resumo}"
+                if [[ ${ISOLADO} -eq 1 ]]; then rm -rf -- "${CAND_DIR[$i]:?}"; fi
             fi
         done
     done
+
+    # Modo isolado: nenhum processo da compilação sobrevive, e o bot i passa a ter o uid BASE+i
+    if [[ ${ISOLADO} -eq 1 ]]; then
+        local u
+        for ((u=BOT_UID_BASE; u<BOT_UID_BASE+tentativa; u++)); do
+            matar_uid "$u"
+            limpar_arquivos_uid "$u"
+        done
+        for ((i=0; i<${#NOMES_BOTS[@]}; i++)); do
+            u=$(( BOT_UID_BASE + i ))
+            chown -R -h "${u}:${u}" -- "${DIRS_BOTS[$i]}"
+        done
+    fi
 
     # Excedentes do limite: não chegam a ser compilados
     for ((; prox<total_validos; prox++)); do
@@ -675,14 +974,29 @@ executar_batalha() {
     orcamento="$(orcamento_partida_seg "${#NOMES_BOTS[@]}")"
     timeout_bot=$(( orcamento + FOLGA_BOT_SEG ))
 
-    local comandos_protegidos=()
+    local comandos_protegidos=() cmd i=0
     for cmd in "${COMANDOS_BOTS[@]}"; do
-        local wrapper="timeout -k 3s ${timeout_bot}s bash -c 'ulimit -v ${MEM_LIMIT_KB} 2>/dev/null || true; exec ${cmd}'"
+        local wrapper
+        if [[ ${ISOLADO} -eq 1 ]]; then
+            # Limites aplicados como root e herdados; o setpriv troca para o uid do bot no exec.
+            # O stderr do bot vai para o stderr.log do próprio diretório (conta no limite de disco).
+            local u=$(( BOT_UID_BASE + i )) d="${DIRS_BOTS[$i]}"
+            wrapper="timeout -k 3s ${timeout_bot}s bash -c 'ulimit -v ${MEM_LIMIT_KB} 2>/dev/null || true; ulimit -u ${BOT_MAX_PROC} || exit 1; ulimit -f $(( BOT_MAX_DISCO_MB * 1024 )) || exit 1; umask 077; cd \"${d}\" || exit 1; export HOME=\"${d}/home\" TMPDIR=\"${d}/tmp\"; exec setpriv --reuid=${u} --regid=${u} ${SETPRIV_OPCOES[*]} ${cmd} 2>>\"${d}/stderr.log\"'"
+        else
+            wrapper="timeout -k 3s ${timeout_bot}s bash -c 'ulimit -v ${MEM_LIMIT_KB} 2>/dev/null || true; exec ${cmd}'"
+        fi
         comandos_protegidos+=("$wrapper")
+        i=$(( i + 1 ))
     done
 
     echo -e "  ${TAG_INFO} Bots conectados via Pipes IPC: ${#NOMES_BOTS[@]}"
     echo -e "  ${TAG_INFO} Parametros de isolamento: orcamento da partida=${orcamento}s (vigia global), limite por bot=${timeout_bot}s, ulimit_mem=${MEM_LIMIT_KB}KB"
+    if [[ ${ISOLADO} -eq 1 ]]; then
+        echo -e "  ${TAG_INFO} Modo isolado: ulimit -u ${BOT_MAX_PROC}, disco ${BOT_MAX_DISCO_MB} MB por bot; uids:"
+        for ((i=0; i<${#NOMES_BOTS[@]}; i++)); do
+            echo "      Bot $(( i + 1 )): ${NOMES_BOTS[$i]} -> uid $(( BOT_UID_BASE + i ))"
+        done
+    fi
     if [[ -n "${FASE_ARQ}" ]]; then
         echo -e "  ${TAG_INFO} Modo fase: $(basename "${FASE_ARQ}") (TOPCOM_FASE_SEED=${FASE_SEED:-sorteada})"
         rm -f "${DIR_RESULTADO_FASE}/resultado_fase.json"
@@ -895,7 +1209,9 @@ verificar_dependencias
 baixar_bibliotecas
 coletar_candidatos
 compilar_engine
+isolamento_preparar
 preparar_bots
 executar_batalha
+isolamento_relatorio
 exibir_resumo_e_gerar_json
 avaliar_fase

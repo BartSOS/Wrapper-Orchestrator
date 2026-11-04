@@ -97,7 +97,6 @@ struct ResultadoObjetivo {
 // ------------------------------------------------------------------------------
 std::string inteiro(double v) { return std::to_string(static_cast<long long>(std::llround(v))); }
 
-std::string posicao(double x, double y) { return "(" + inteiro(x) + ", " + inteiro(y) + ")"; }
 
 std::string umDecimal(double v) {
     std::ostringstream s;
@@ -165,7 +164,7 @@ public:
         if (!jogadorApareceu_) {
             saida["passou"] = false;
             saida["baloes"] = 0;
-            saida["motivo"] = "Seu tanque não entrou na arena (o bot não iniciou ou foi excluído antes do primeiro tick).";
+            saida["motivo"] = "Seu tanque não entrou na arena (o bot não iniciou ou foi excluído antes do primeiro frame).";
             saida["metricas"] = {{"ticks", 0}, {"tiros", 0}, {"vida", 0}, {"dano_recebido", 0}};
             saida["objetivos"] = json::array();
             for (const auto& o : fase_["objetivos"])
@@ -217,11 +216,7 @@ public:
         std::vector<std::string> frases;
         for (const auto& r : resultados)
             if (passou || !r.ok) frases.push_back(r.motivo);
-        std::string motivo = juntar(frases, " ", " ");
-        if (!passou && morte_) {
-            std::string m = fraseMorte();
-            if (motivo.find(m) == std::string::npos) motivo += " " + m;
-        }
+        std::string motivo = passou ? juntar(frases, " ", " ") : motivoDeFalha(frases);
 
         saida["passou"] = passou;
         saida["baloes"] = baloes;
@@ -532,10 +527,40 @@ private:
     std::string fraseMorte() const {
         if (!morte_) return "";
         const Quadro& q = quadros_[*morte_];
-        std::string onde = " no tick " + std::to_string(q.tick) + ", na posição " + posicao(q.x, q.y) + ".";
+        std::string onde = " no frame " + std::to_string(q.tick) + ".";
         if (q.artilharia_perto) return "Seu tanque foi destruído pela artilharia" + onde;
         if (q.atingido_por_tiro) return "Seu tanque foi destruído por um tiro" + onde;
-        return "Seu tanque parou" + onde + " O bot deixou de responder (20 ticks sem resposta) ou terminou com erro.";
+        return "Seu tanque parou no frame " + std::to_string(q.tick) + ": o bot deixou de responder (20 frames sem resposta) ou terminou com erro.";
+    }
+
+    // Quebra um motivo em frases. As frases daqui não têm ". " no meio: decimal usa vírgula.
+    static std::vector<std::string> quebrarFrases(const std::string& texto) {
+        std::vector<std::string> saida;
+        size_t de = 0, ate;
+        while ((ate = texto.find(". ", de)) != std::string::npos) {
+            saida.push_back(texto.substr(de, ate + 1 - de));
+            de = ate + 2;
+        }
+        if (de < texto.size()) saida.push_back(texto.substr(de));
+        return saida;
+    }
+
+    // Falha: no máximo 3 frases. O primeiro objetivo que falhou fica com o que sobrar; cada
+    // outro objetivo e a morte do tanque entram com uma frase, e a dica é a primeira a sair.
+    std::string motivoDeFalha(const std::vector<std::string>& falhas) const {
+        if (falhas.empty()) return "";
+        std::vector<std::string> extras;
+        for (size_t i = 1; i < falhas.size(); i++) extras.push_back(quebrarFrases(falhas[i]).front());
+        std::string morte = fraseMorte();
+        bool morteJaDita = false;
+        for (const auto& f : falhas) morteJaDita = morteJaDita || f.find(morte) != std::string::npos;
+        if (morte_ && !morteJaDita) extras.push_back(morte);
+        if (extras.size() > 2) extras.erase(extras.begin(), extras.end() - 2);
+
+        std::vector<std::string> principal = quebrarFrases(falhas.front());
+        if (principal.size() > 3 - extras.size()) principal.resize(3 - extras.size());
+        principal.insert(principal.end(), extras.begin(), extras.end());
+        return juntar(principal, " ", " ");
     }
 
     // Quadros em que o jogador está vivo, até o tick limite
@@ -553,16 +578,57 @@ private:
         return tickFinal();
     }
 
-    struct MaisPerto {
-        double d = 1e18;
-        int tick = -1;
-        double x = 0, y = 0;
+    // Como o tanque se moveu em relação a um ponto, num trecho da tentativa
+    struct Trajeto {
+        bool tem = false;
+        int tickInicio = -1, tickMaisPerto = -1;
+        double dInicio = 0, dMaisPerto = 1e18, dFinal = 0, andou = 0;
+        double xa = 0, ya = 0;
+
+        void registrar(const Quadro& q, double d) {
+            if (!tem) {
+                tem = true;
+                tickInicio = q.tick;
+                dInicio = d;
+            } else {
+                andou += dist(xa, ya, q.x, q.y);
+            }
+            if (d < dMaisPerto) {
+                dMaisPerto = d;
+                tickMaisPerto = q.tick;
+            }
+            dFinal = d;
+            xa = q.x;
+            ya = q.y;
+        }
     };
 
-    std::string fraseMaisPerto(const Ponto& p, const MaisPerto& m) const {
-        if (m.tick < 0) return "";
-        return "o mais perto que chegou foi " + inteiro(m.d) + " unidades (raio " + inteiro(p.raio) + "), no tick " +
-               std::to_string(m.tick) + ", na posição " + posicao(m.x, m.y);
+    // Motivo de quem não alcançou um ponto: o que faltou (rotulo); os números; a dica, só
+    // quando o trajeto sustenta o diagnóstico. origem: de onde o trecho partiu.
+    std::string faltouAlcancar(const std::string& rotulo, const std::string& origem, const Ponto& p, const Trajeto& t) const {
+        if (!t.tem) return rotulo + ".";
+        static const std::string DICA_RUMO = " Confira o sinal do turn e se o ângulo está em graus.";
+        std::string alvo = "precisava chegar a até " + inteiro(p.raio) + ".";
+        if (t.andou < 10) {
+            std::string s = rotulo + ": o tanque quase não se mexeu. Andou " + inteiro(t.andou) + " unidades e ficou a " +
+                            inteiro(t.dFinal) + " do ponto; " + alvo;
+            if (!morte_) s += " Confira se o bot envia throttle diferente de 0.";
+            return s;
+        }
+        if (t.tickMaisPerto == t.tickInicio) {
+            std::string s = rotulo + (t.dFinal > t.dMaisPerto + 50 ? ": o tanque só se afastou " : ": o tanque não se aproximou ") +
+                            origem + ". Começou a " + inteiro(t.dInicio) + " unidades do ponto e terminou a " + inteiro(t.dFinal) +
+                            "; " + alvo;
+            if (t.andou > 100) s += DICA_RUMO;
+            return s;
+        }
+        std::string s = rotulo + ": o mais perto foi " + inteiro(t.dMaisPerto) + " unidades, no frame " +
+                        std::to_string(t.tickMaisPerto) + ", e " + alvo;
+        if (t.dMaisPerto > 3 * p.raio && t.andou > 100 && t.dFinal > t.dMaisPerto + 50)
+            s += " Depois se afastou e terminou a " + inteiro(t.dFinal) + " do ponto." + DICA_RUMO;
+        else if (t.dMaisPerto > 3 * p.raio && t.andou > 3 * t.dMaisPerto)
+            s += " Andou " + inteiro(t.andou) + " unidades sem alcançar o ponto." + DICA_RUMO;
+        return s;
     }
 
     // ---------------------------------------------------------------- objetivos
@@ -585,13 +651,11 @@ private:
         ResultadoObjetivo r{"chegar"};
         const Ponto& p = pontos_.at(o["ponto"].get<std::string>());
         int lim = limite(o);
-        MaisPerto m;
+        Trajeto t;
         int tickEntrada = -1;
-        double dFinal = -1;
         percorrerVivo(1 << 30, [&](const Quadro& q) {
             double d = dist(q.x, q.y, p.x, p.y);
-            if (q.tick <= lim) dFinal = d;
-            if (q.tick <= lim && d < m.d) m = {d, q.tick, q.x, q.y};
+            if (q.tick <= lim) t.registrar(q, d);
             if (d <= p.raio) {
                 tickEntrada = q.tick;
                 return false;
@@ -603,23 +667,15 @@ private:
             r.ok = true;
             r.tick = tickEntrada;
             consumir(p.id, tickEntrada);
-            r.detalhe = "ponto " + p.id + " no tick " + std::to_string(tickEntrada) + lim_s;
-            r.motivo = "Chegou ao ponto " + p.id + " no tick " + std::to_string(tickEntrada) + ".";
+            r.detalhe = "ponto " + p.id + " no frame " + std::to_string(tickEntrada) + lim_s;
+            r.motivo = "Chegou ao ponto " + p.id + " no frame " + std::to_string(tickEntrada) + ".";
         } else if (tickEntrada >= 0) {
-            r.detalhe = "ponto " + p.id + " só no tick " + std::to_string(tickEntrada) + lim_s;
-            r.motivo = "Chegou ao ponto " + p.id + " no tick " + std::to_string(tickEntrada) + ", depois do limite (tick " +
+            r.detalhe = "ponto " + p.id + " só no frame " + std::to_string(tickEntrada) + lim_s;
+            r.motivo = "Chegou ao ponto " + p.id + " no frame " + std::to_string(tickEntrada) + ", depois do limite (frame " +
                        std::to_string(lim) + ").";
         } else {
-            r.detalhe = "não chegou ao ponto " + p.id + "; mais perto: " + inteiro(m.d) + " unidades";
-            r.motivo = "Não chegou ao ponto " + p.id + ": " + fraseMaisPerto(p, m) + ".";
-            if (m.tick >= 0 && m.d > 3 * p.raio && distanciaPercorrida_ > 100 && dFinal > m.d + 50)
-                r.motivo += " O tanque andou " + inteiro(distanciaPercorrida_) + " unidades, mas terminou a " + inteiro(dFinal) +
-                            " do ponto, mais longe do que chegou a estar: confira o sinal do turn e se o ângulo está em graus.";
-            else if (m.tick >= 0 && m.d > 3 * p.raio && distanciaPercorrida_ > 3 * m.d)
-                r.motivo += " O tanque andou bastante (" + inteiro(distanciaPercorrida_) +
-                            " unidades) sem se aproximar: confira se o ângulo está em graus e se o sinal do turn está certo.";
-            else if (distanciaPercorrida_ < 10)
-                r.motivo += " O tanque quase não se mexeu (andou " + inteiro(distanciaPercorrida_) + " unidades).";
+            r.detalhe = "não chegou ao ponto " + p.id + "; mais perto: " + inteiro(t.dMaisPerto) + " unidades";
+            r.motivo = faltouAlcancar("Não chegou ao ponto " + p.id, "desde a largada", p, t);
         }
         return r;
     }
@@ -634,10 +690,10 @@ private:
         double velSaida = 0;
         bool temAnt = false;
         double xa = 0, ya = 0;
-        MaisPerto m;
+        Trajeto t;
         percorrerVivo(lim, [&](const Quadro& q) {
             double d = dist(q.x, q.y, p.x, p.y);
-            if (d < m.d) m = {d, q.tick, q.x, q.y};
+            t.registrar(q, d);
             if (d <= p.raio) {
                 if (seguidos == 0) {
                     inicio = q.tick;
@@ -663,28 +719,28 @@ private:
             temAnt = true;
             return true;
         });
-        std::string req = std::to_string(precisa) + " ticks seguidos no ponto " + p.id;
+        std::string req = std::to_string(precisa) + " frames seguidos no ponto " + p.id;
         if (r.ok) {
-            r.detalhe = req + " (do tick " + std::to_string(inicio) + " ao " + std::to_string(r.tick) + "; limite " +
+            r.detalhe = req + " (do frame " + std::to_string(inicio) + " ao " + std::to_string(r.tick) + "; limite " +
                         std::to_string(lim) + ")";
-            r.motivo = "Parou no ponto " + p.id + " no tick " + std::to_string(inicio) + " e ficou " + std::to_string(precisa) +
-                       " ticks seguidos (até o tick " + std::to_string(r.tick) + ").";
+            r.motivo = "Parou no ponto " + p.id + " no frame " + std::to_string(inicio) + " e ficou " + std::to_string(precisa) +
+                       " frames seguidos (até o frame " + std::to_string(r.tick) + ").";
             return r;
         }
         if (entradas == 0) {
-            r.detalhe = "nunca entrou no raio do ponto " + p.id + "; mais perto: " + inteiro(m.d) + " unidades";
-            r.motivo = "Nunca entrou no raio do ponto " + p.id + " até o tick " + std::to_string(lim) + ": " + fraseMaisPerto(p, m) + ".";
+            r.detalhe = "nunca entrou no raio do ponto " + p.id + "; mais perto: " + inteiro(t.dMaisPerto) + " unidades";
+            r.motivo = faltouAlcancar("Nunca entrou no raio do ponto " + p.id, "desde a largada", p, t);
             return r;
         }
-        r.detalhe = "máximo de " + std::to_string(melhor) + " de " + std::to_string(precisa) + " ticks seguidos no ponto " + p.id;
-        r.motivo = "Entrou no raio do ponto " + p.id + " " + std::to_string(entradas) + (entradas == 1 ? " vez" : " vezes") +
-                   ", mas ficou no máximo " + std::to_string(melhor) + " ticks seguidos (precisa de " + std::to_string(precisa) +
-                   " até o tick " + std::to_string(lim) + ").";
+        r.detalhe = "máximo de " + std::to_string(melhor) + " de " + std::to_string(precisa) + " frames seguidos no ponto " + p.id;
+        r.motivo = "Entrou no raio do ponto " + p.id + (entradas == 1 ? "" : " " + std::to_string(entradas) + " vezes") +
+                   ", mas ficou no máximo " + std::to_string(melhor) + " frames seguidos; precisava de " + std::to_string(precisa) +
+                   " até o frame " + std::to_string(lim) + ".";
         if (seguidos > 0) {
-            r.motivo += " Estava lá dentro desde o tick " + std::to_string(inicio) + " quando o prazo acabou.";
+            r.motivo += " Ainda estava lá dentro, desde o frame " + std::to_string(inicio) + ", quando o prazo acabou.";
         } else if (tickSaida >= 0) {
-            r.motivo += " Na última vez saiu no tick " + std::to_string(tickSaida) + " andando " + umDecimal(velSaida) +
-                        " unidades por tick: reduza o throttle perto do ponto e mande throttle 0 lá dentro.";
+            r.motivo += " Saiu no frame " + std::to_string(tickSaida) + " a " + umDecimal(velSaida) +
+                        " unidades por frame. Reduza o throttle perto do ponto e mande throttle 0 lá dentro.";
         }
         return r;
     }
@@ -699,16 +755,16 @@ private:
         std::string foraId;
         int foraTick = -1;
         std::string foraEsperado;
-        MaisPerto m;
+        Trajeto t;  // trecho da largada (ou do último ponto visitado) até agora
         percorrerVivo(lim, [&](const Quadro& q) {
             const Ponto& alvo = pontos_.at(ids[prox]);
             double d = dist(q.x, q.y, alvo.x, alvo.y);
-            if (d < m.d) m = {d, q.tick, q.x, q.y};
+            t.registrar(q, d);
             if (d <= alvo.raio) {
                 ticks.push_back(q.tick);
                 consumir(alvo.id, q.tick);
                 prox++;
-                m = MaisPerto{};
+                t = Trajeto{};
                 if (prox == ids.size()) {
                     r.ok = true;
                     r.tick = q.tick;
@@ -730,25 +786,21 @@ private:
             return true;
         });
         std::vector<std::string> visitados;
-        for (size_t i = 0; i < ticks.size(); ++i) visitados.push_back(ids[i] + " (tick " + std::to_string(ticks[i]) + ")");
+        for (size_t i = 0; i < ticks.size(); ++i) visitados.push_back(ids[i] + " (frame " + std::to_string(ticks[i]) + ")");
         if (r.ok) {
             r.detalhe = juntar(visitados, ", ", " e ") + "; limite " + std::to_string(lim);
             r.motivo = "Percorreu os " + std::to_string(ids.size()) + " pontos na ordem; terminou no ponto " + ids.back() +
-                       " no tick " + std::to_string(r.tick) + ".";
+                       " no frame " + std::to_string(r.tick) + ".";
             return r;
         }
         const Ponto& falta = pontos_.at(ids[prox]);
         r.detalhe = std::to_string(prox) + " de " + std::to_string(ids.size()) + " pontos; faltou " + falta.id;
-        if (prox == 0)
-            r.motivo = "Não chegou ao " + falta.id + " (o primeiro da lista) até o tick " + std::to_string(lim);
-        else
-            r.motivo = "Visitou " + juntar(visitados, ", ", " e ") + ", mas não chegou ao " + falta.id + " até o tick " +
-                       std::to_string(lim);
-        std::string mp = fraseMaisPerto(falta, m);
-        r.motivo += mp.empty() ? "." : ": " + mp + ".";
+        std::string rotulo = prox == 0 ? "Não chegou ao " + falta.id + ", o primeiro ponto"
+                                       : "Visitou " + juntar(visitados, ", ", " e ") + ", mas não chegou ao " + falta.id;
+        r.motivo = faltouAlcancar(rotulo, prox == 0 ? "desde a largada" : "desde o " + ids[prox - 1], falta, t);
         if (foraTick >= 0)
-            r.motivo += " Passou pelo " + foraId + " fora da ordem no tick " + std::to_string(foraTick) + " (não conta: o próximo era o " +
-                        foraEsperado + ").";
+            r.motivo += " Passou pelo " + foraId + " fora da ordem no frame " + std::to_string(foraTick) + ", e isso não conta: o próximo era o " +
+                        foraEsperado + ".";
         return r;
     }
 
@@ -778,10 +830,10 @@ private:
         for (const auto& id : ids) {
             auto it = morte.find(id);
             if (it != morte.end() && it->second <= lim) {
-                dentro.push_back(id + " no tick " + std::to_string(it->second));
+                dentro.push_back(id);
                 ultimo = std::max(ultimo, it->second);
             } else if (it != morte.end()) {
-                atrasados.push_back(id + " só no tick " + std::to_string(it->second));
+                atrasados.push_back(id + " só no frame " + std::to_string(it->second));
                 faltam.push_back(id);
             } else {
                 faltam.push_back(id);
@@ -804,21 +856,21 @@ private:
             }
             r.ok = true;
             r.tick = ultimo;
-            r.detalhe = n_s + " de " + n_s + " alvos até o tick " + std::to_string(ultimo) + " (limite " + std::to_string(lim) + "), " +
+            r.detalhe = n_s + " de " + n_s + " alvos até o frame " + std::to_string(ultimo) + " (limite " + std::to_string(lim) + "), " +
                         std::to_string(tiros) + (tiros == 1 ? " tiro" : " tiros");
-            r.motivo = "Destruiu os " + n_s + " alvos (o último no tick " + std::to_string(ultimo) + ") com " + std::to_string(tiros) +
+            r.motivo = "Destruiu os " + n_s + " alvos (o último no frame " + std::to_string(ultimo) + ") com " + std::to_string(tiros) +
                        (tiros == 1 ? " tiro." : " tiros.");
             return r;
         }
-        r.detalhe = std::to_string(dentro.size()) + " de " + n_s + " alvos até o tick " + std::to_string(lim) + "; faltou " +
+        r.detalhe = std::to_string(dentro.size()) + " de " + n_s + " alvos até o frame " + std::to_string(lim) + "; faltou " +
                     juntar(faltam, ", ", " e ");
-        r.motivo = "Destruiu " + std::to_string(dentro.size()) + " de " + n_s + " alvos até o tick " + std::to_string(lim);
-        if (!dentro.empty()) r.motivo += " (" + juntar(dentro, ", ", " e ") + ")";
-        r.motivo += "; faltou " + juntar(faltam, ", ", " e ") + ".";
-        if (!atrasados.empty()) r.motivo += " Depois do limite: " + juntar(atrasados, ", ", " e ") + ".";
+        r.motivo = "Destruiu " + std::to_string(dentro.size()) + " de " + n_s + " alvos até o frame " + std::to_string(lim) +
+                   "; faltou " + juntar(faltam, ", ", " e ");
+        if (!atrasados.empty()) r.motivo += " (" + juntar(atrasados, ", ", " e ") + ")";
+        r.motivo += ".";
         int tiros = tirosAte(lim);
         if (tiros == 0) {
-            r.motivo += " Nenhum tiro saiu: o tiro só sai com shoot verdadeiro, cooldown 0 e energia de pelo menos 20.";
+            r.motivo += " Nenhum tiro saiu. Confira: o tiro só sai com shoot verdadeiro, cooldown 0 e energia de pelo menos 20.";
             return r;
         }
         int erros = 0;
@@ -830,12 +882,12 @@ private:
         }
         r.motivo += " Foram " + std::to_string(tiros) + (tiros == 1 ? " tiro" : " tiros");
         if (erros == 0) {
-            r.motivo += ", e nenhum errou: faltou atirar nos outros alvos a tempo.";
+            r.motivo += " e nenhum errou; faltou atirar nos outros alvos a tempo.";
         } else {
             r.motivo += ", " + std::to_string(erros) + (erros == 1 ? " errou" : " erraram");
             if (melhorErro)
                 r.motivo += "; o que passou mais perto errou o " + melhorErro->alvoMaisPerto + " por " +
-                            inteiro(std::max(0.0, melhorErro->menor - RAIO_TANQUE - RAIO_PROJETIL)) + " unidades (tiro do tick " +
+                            inteiro(std::max(0.0, melhorErro->menor - RAIO_TANQUE - RAIO_PROJETIL)) + " unidades (tiro do frame " +
                             std::to_string(melhorErro->tickTiro) + ")";
             r.motivo += ". Confira se o turret_angle está em graus e aponta da sua posição para o alvo.";
         }
@@ -858,17 +910,21 @@ private:
                 bombas.push_back(std::to_string(danos_[i].first));
             }
         }
-        std::string lista = nBombas == 0 ? "" : " (ticks " + juntar(bombas, ", ", " e ") + ")";
+        std::string lista = nBombas == 0 ? "" : " (" + std::string(nBombas == 1 ? "frame " : "frames ") + juntar(bombas, ", ", " e ") + ")";
         std::string recebeu = std::to_string(nBombas) + (nBombas == 1 ? " bombardeio" : " bombardeios") + lista;
 
         if (morte_ && quadros_[*morte_].tick <= lim) {
             const Quadro& q = quadros_[*morte_];
-            r.detalhe = "destruído no tick " + std::to_string(q.tick) + " (limite " + std::to_string(lim) + ")";
+            r.detalhe = "destruído no frame " + std::to_string(q.tick) + " (limite " + std::to_string(lim) + ")";
             r.motivo = fraseMorte();
-            if (nBombas > 0) r.motivo += " Recebeu " + recebeu + ".";
-            if (distanciaPercorrida_ < 30)
-                r.motivo += " O tanque quase não se mexeu (andou " + inteiro(distanciaPercorrida_) +
-                            " unidades): leia estado[\"hazards\"] e fuja assim que o aviso aparecer.";
+            bool parado = distanciaPercorrida_ < 30;
+            std::string mexeu = "quase não se mexeu (andou " + inteiro(distanciaPercorrida_) + " unidades)";
+            if (nBombas > 0)
+                r.motivo += " Recebeu " + recebeu + (parado ? " e " + mexeu : "") + ".";
+            else if (parado)
+                r.motivo += " O tanque " + mexeu + ".";
+            // A dica de fugir só faz sentido para quem morreu de bombardeio sem sair do lugar
+            if (parado && q.artilharia_perto) r.motivo += " Leia estado[\"hazards\"] e fuja assim que o aviso aparecer.";
             return r;
         }
         // Vida no último quadro até o limite
@@ -877,21 +933,21 @@ private:
             if (q.tick <= lim && q.tem_jogador) fim = &q;
         if (!fim || fim->tick < ultimoPossivel) {
             int t = fim ? fim->tick : 0;
-            r.detalhe = "a partida terminou no tick " + std::to_string(t) + ", antes do tick " + std::to_string(ultimoPossivel);
-            r.motivo = "A partida terminou no tick " + std::to_string(t) + ", antes do tick " + std::to_string(ultimoPossivel) + ".";
+            r.detalhe = "a partida terminou no frame " + std::to_string(t) + ", antes do frame " + std::to_string(ultimoPossivel);
+            r.motivo = "A partida terminou no frame " + std::to_string(t) + ", antes do frame " + std::to_string(ultimoPossivel) + ".";
             return r;
         }
         double vida = std::max(0.0, fim->hp);
         if (vidaMin && vida < *vidaMin) {
             r.detalhe = "vivo, mas com " + inteiro(vida) + " de vida (mínimo " + inteiro(*vidaMin) + ")";
-            r.motivo = "Sobreviveu até o tick " + std::to_string(fim->tick) + ", mas com " + inteiro(vida) +
+            r.motivo = "Sobreviveu até o frame " + std::to_string(fim->tick) + ", mas com " + inteiro(vida) +
                        " de vida; o mínimo é " + inteiro(*vidaMin) + ". Recebeu " + recebeu + ".";
             return r;
         }
         r.ok = true;
         r.tick = fim->tick;
-        r.detalhe = "vivo no tick " + std::to_string(fim->tick) + " com " + inteiro(vida) + " de vida";
-        r.motivo = "Sobreviveu até o tick " + std::to_string(fim->tick) + " com " + inteiro(vida) + " de vida";
+        r.detalhe = "vivo no frame " + std::to_string(fim->tick) + " com " + inteiro(vida) + " de vida";
+        r.motivo = "Sobreviveu até o frame " + std::to_string(fim->tick) + " com " + inteiro(vida) + " de vida";
         r.motivo += nBombas == 0 ? ", sem levar nenhum bombardeio." : "; levou " + recebeu + ".";
         return r;
     }
@@ -908,7 +964,7 @@ private:
         if (temMax && temMin) ok = ok && valor >= e["min"].get<double>() - 1e-9;
         if (ok) return "";
         std::string v = inteiro(valor), l = inteiro(lim);
-        if (m == "ticks") return temMax ? "concluir até o tick " + l + " (você: " + v + ")" : "concluir depois do tick " + l;
+        if (m == "ticks") return temMax ? "concluir até o frame " + l + " (você: " + v + ")" : "concluir depois do frame " + l;
         if (m == "tiros") return temMax ? "usar no máximo " + l + (lim == 1 ? " tiro" : " tiros") + " (você: " + v + ")"
                                         : "usar pelo menos " + l + " tiros (você: " + v + ")";
         if (m == "dano_recebido") {

@@ -7,8 +7,8 @@
   "texto": "Leve o tanque até o ponto B. A posição do ponto muda a cada tentativa: leia estado[\"objetivo\"][\"pontos\"].",
   "dicas": [
     "angulo_para dá a direção do ponto em graus; atan2 sozinho dá radianos.",
-    "diferenca_angulo(meu.angle, alvo) diz para que lado girar (turn de -1 a 1, 9 graus por tick).",
-    "Com throttle 1 o tanque anda 5 unidades por tick para onde o chassi aponta."
+    "diferenca_angulo(meu.angle, alvo) diz para que lado girar (turn de -1 a 1, 9 graus por frame).",
+    "Com throttle 1 o tanque anda 5 unidades por frame para onde o chassi aponta."
   ],
   "ajudantes": ["eu", "angulo_para", "diferenca_angulo", "distancia", "montar_acao"],
   "cenario": {

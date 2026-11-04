@@ -120,6 +120,15 @@ def casos_de_borda(binario, tmp):
     rep3 = simulador.simular(f01, bot3, 1)
     cod, s = avaliar(binario, tarde, rep3, tmp)
     conferir("chegou depois do limite", s["passou"] is False and "depois do limite" in s["motivo"], s)
+    # Motivo de falha tem no máximo 3 frases, mesmo com dois objetivos falhos ou com a morte do tanque
+    f05 = carregar_fase("05_mira_andando")
+    cod, s = avaliar(binario, f05, simulador.simular(f05, bot_parado, 1), tmp)
+    conferir("dois objetivos falhos -> 3 frases, cita os dois",
+             frases(s["motivo"]) <= 3 and "ponto B" in s["motivo"] and "alvos" in s["motivo"], s)
+    cod, s = avaliar(binario, f05, simulador.simular(f05, bot_parado, 1, morrer_no_tick=50), tmp)
+    conferir("dois objetivos falhos e morte -> 3 frases, cita a morte",
+             frases(s["motivo"]) <= 3 and "deixou de responder" in s["motivo"], s)
+    conferir("timeout -> no máximo 3 frases", frases(avaliar(binario, f01, rep_to, tmp)[1]["motivo"]) <= 3, s)
     # Balão com dois critérios (o segundo inalcançável) e proximo_balao
     duas = copy.deepcopy(f01)
     duas["baloes"] = [{"baloes": 2, "metrica": "ticks", "max": 1000},
@@ -129,6 +138,11 @@ def casos_de_borda(binario, tmp):
     conferir("3 balões exige os dois critérios", s["baloes"] == 2 and "tiros" in (s.get("proximo_balao") or ""), s)
     conferir("métricas completas", set(s.get("metricas", {})) == {"ticks", "tiros", "vida", "dano_recebido"}, s)
     return falhas
+
+
+def frases(motivo):
+    """Quantas frases tem o motivo (decimal usa vírgula: ". " só separa frases)."""
+    return motivo.count(". ") + 1
 
 
 def bots_de_referencia(binario, tmp, seeds):
@@ -147,7 +161,8 @@ def bots_de_referencia(binario, tmp, seeds):
             cod, s = avaliar(binario, fase, simulador.simular(fase, pensar, seed), tmp)
             linhas.append(s)
             ok = (cod == 0 and s.get("passou") == esp["passou"] and s.get("baloes") == esp["baloes"]
-                  and esp.get("motivo_contem", "") in s.get("motivo", ""))
+                  and esp.get("motivo_contem", "") in s.get("motivo", "")
+                  and (s.get("passou") or frases(s.get("motivo", "")) <= 3))
             if not ok:
                 falhas.append(f"[bot] {nome} seed {seed}: esperado passou={esp['passou']} baloes={esp['baloes']}; "
                               f"veio passou={s.get('passou')} baloes={s.get('baloes')} metricas={s.get('metricas')} "

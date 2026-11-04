@@ -6,7 +6,7 @@
   "conceito": "turret_angle absoluto, recarga e energia",
   "texto": "Destrua os 3 alvos parados (um tiro em cada). Eles aparecem em estado[\"enemies\"].",
   "dicas": [
-    "turret_angle é a direção absoluta na arena, em graus, e a torre chega lá no mesmo tick.",
+    "turret_angle é a direção absoluta na arena, em graus, e a torre chega lá no mesmo frame.",
     "O tiro só sai com cooldown 0 e energia de pelo menos 20 (cada tiro gasta 20).",
     "Enquanto um tiro voa, mire em outro alvo."
   ],

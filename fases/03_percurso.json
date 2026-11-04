@@ -3,7 +3,7 @@
   "ordem": 3,
   "bloco": "movimento",
   "titulo": "Percorrer pontos em ordem",
-  "conceito": "guardar estado entre ticks",
+  "conceito": "guardar estado entre frames",
   "texto": "Passe pelos pontos P1, P2, P3 e P4, nessa ordem. Ponto fora da vez não conta.",
   "dicas": [
     "O estado traz todos os pontos, mas não diz por quais você já passou.",

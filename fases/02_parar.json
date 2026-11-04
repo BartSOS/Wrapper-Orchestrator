@@ -4,10 +4,10 @@
   "bloco": "movimento",
   "titulo": "Parar dentro do raio",
   "conceito": "desacelerar e parar no ponto",
-  "texto": "Pare dentro do ponto B (até 10 unidades do centro) e fique lá 20 ticks seguidos.",
+  "texto": "Pare dentro do ponto B (até 10 unidades do centro) e fique lá 20 frames seguidos.",
   "dicas": [
     "Andando sempre com throttle 1 o tanque passa do ponto e fica rodando em volta dele.",
-    "A velocidade muda na hora: throttle 0 para no mesmo tick.",
+    "A velocidade muda na hora: throttle 0 para no mesmo frame.",
     "Se faltar menos de 5 unidades, use throttle = distância / 5."
   ],
   "ajudantes": ["eu", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],

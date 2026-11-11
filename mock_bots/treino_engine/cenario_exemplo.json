@@ -30,8 +30,8 @@
     {"tipo": "visitar_em_ordem", "pontos": ["B", "C"], "ate_tick": 300},
     {"tipo": "acertar_alvos", "alvos": "todos", "ate_tick": 400}
   ],
-  "estrelas": [
-    {"estrelas": 2, "metrica": "ticks", "max": 300},
-    {"estrelas": 3, "metrica": "ticks", "max": 220}
+  "baloes": [
+    {"baloes": 2, "metrica": "ticks", "max": 300},
+    {"baloes": 3, "metrica": "ticks", "max": 220}
   ]
 }

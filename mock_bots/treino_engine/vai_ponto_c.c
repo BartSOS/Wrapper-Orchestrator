@@ -1,16 +1,57 @@
-/* Bot de teste do modo cenário (frente engine), em C: vai até o primeiro ponto do
- * objetivo (Estado.pontos[0], arena.h) e para dentro do raio. Sem pontos, fica parado. */
+/* Bot de teste do modo cenário (frente engine), em C: vai até o primeiro ponto da
+ * fase (e->pontos[0], arena.h) e para dentro de metade do raio. Sem pontos, fica parado. */
 #include "arena.h"
 
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
+double diferenca_angulo(double de, double para);
+
 Acao pensar(const Estado *e) {
-    Acao a = {0.0, 0.0, e->self.turret_angle, false, false};
-    if (e->n_pontos < 1) return a;
-    const Ponto *p = &e->pontos[0];
-    double dx = p->x - e->self.x, dy = p->y - e->self.y;
-    if (sqrt(dx * dx + dy * dy) <= p->raio * 0.5) return a;
-    double alvo = atan2(dy, dx) * 180.0 / M_PI;
-    double erro = fmod(alvo - e->self.angle + 540.0, 360.0) - 180.0;
-    a.turn = erro / 9.0 > 1.0 ? 1.0 : (erro / 9.0 < -1.0 ? -1.0 : erro / 9.0);
-    a.throttle = fabs(erro) < 30.0 ? 1.0 : 0.2;
-    return a;
+    Tanque meu = e->eu;
+    Acao acao;
+    acao.mover = PARADO;
+    acao.direcao = meu.angulo_chassi;
+    acao.angulo_torre = meu.angulo_torre;
+    acao.atirar = 0;
+    acao.ligar_escudo = 0;
+    if (e->n_pontos < 1) {
+        return acao;
+    }
+    Ponto p = e->pontos[0];
+    if (distancia(meu.x, meu.y, p.x, p.y) <= p.raio * 0.5) {
+        return acao;
+    }
+    double para_o_ponto = angulo_para(meu.x, meu.y, p.x, p.y);
+    acao.direcao = para_o_ponto;
+    if (fabs(diferenca_angulo(meu.angulo_chassi, para_o_ponto)) < 30.0) {
+        acao.mover = FRENTE;
+    } else {
+        acao.mover = 0.2;
+    }
+    return acao;
+}
+
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double graus = atan2(y2 - y1, x2 - x1) * 180.0 / M_PI;
+    if (graus < 0) {
+        graus = graus + 360.0;
+    }
+    return graus;
+}
+
+double diferenca_angulo(double de, double para) {
+    double d = para - de;
+    while (d > 180.0) {
+        d = d - 360.0;
+    }
+    while (d <= -180.0) {
+        d = d + 360.0;
+    }
+    return d;
 }

@@ -1,16 +1,58 @@
-// Bot de teste do modo cenário (frente engine), em C++20: vai até o primeiro ponto de
-// estado["objetivo"]["pontos"] e para dentro do raio. Sem a chave, fica parado.
-json pensar(const json& estado) {
-    const json& eu = estado["self"];
-    json acao = {{"throttle", 0.0}, {"turn", 0.0}, {"turret_angle", eu["turret_angle"]}, {"shoot", false}, {"shield", false}};
-    if (!estado.contains("objetivo") || estado["objetivo"]["pontos"].empty()) return acao;
-    const json& p = estado["objetivo"]["pontos"][0];
-    double dx = p["x"].get<double>() - eu["x"].get<double>();
-    double dy = p["y"].get<double>() - eu["y"].get<double>();
-    if (std::hypot(dx, dy) <= p["raio"].get<double>() * 0.5) return acao;
-    double alvo = std::atan2(dy, dx) * 180.0 / M_PI;
-    double erro = std::fmod(alvo - eu["angle"].get<double>() + 540.0, 360.0) - 180.0;
-    acao["turn"] = std::clamp(erro / 9.0, -1.0, 1.0);
-    acao["throttle"] = std::fabs(erro) < 30.0 ? 1.0 : 0.2;
+// Bot de teste do modo cenário (frente engine), em C++20: vai até o primeiro ponto da
+// fase (e.pontos[0], arena.hpp) e para dentro de metade do raio. Sem pontos, fica parado.
+#include "arena.hpp"
+using namespace std;
+
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
+double diferenca_angulo(double de, double para);
+
+Acao pensar(const Estado& e) {
+    Tanque meu = e.eu;
+    Acao acao;
+    acao.mover = PARADO;
+    acao.direcao = meu.angulo_chassi;
+    acao.angulo_torre = meu.angulo_torre;
+    acao.atirar = false;
+    acao.ligar_escudo = false;
+    if (e.n_pontos < 1) {
+        return acao;
+    }
+    Ponto p = e.pontos[0];
+    if (distancia(meu.x, meu.y, p.x, p.y) <= p.raio * 0.5) {
+        return acao;
+    }
+    double para_o_ponto = angulo_para(meu.x, meu.y, p.x, p.y);
+    acao.direcao = para_o_ponto;
+    if (fabs(diferenca_angulo(meu.angulo_chassi, para_o_ponto)) < 30.0) {
+        acao.mover = FRENTE;
+    } else {
+        acao.mover = 0.2;
+    }
     return acao;
+}
+
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double graus = atan2(y2 - y1, x2 - x1) * 180.0 / M_PI;
+    if (graus < 0) {
+        graus = graus + 360.0;
+    }
+    return graus;
+}
+
+double diferenca_angulo(double de, double para) {
+    double d = para - de;
+    while (d > 180.0) {
+        d = d - 360.0;
+    }
+    while (d <= -180.0) {
+        d = d + 360.0;
+    }
+    return d;
 }

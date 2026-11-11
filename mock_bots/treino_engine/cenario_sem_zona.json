@@ -16,5 +16,5 @@
     "zona": false
   },
   "objetivos": [ {"tipo": "sobreviver", "ate_tick": 700} ],
-  "estrelas": []
+  "baloes": []
 }

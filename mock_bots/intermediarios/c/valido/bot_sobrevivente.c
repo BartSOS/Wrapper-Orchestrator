@@ -1,55 +1,63 @@
+/* Bot de teste (C) - Sobrevivente: foge da artilharia, fica perto do centro e atira no
+ * primeiro inimigo da lista sem parar de se mover. */
 #include "arena.h"
-
-/* Matematica basica (as mesmas funcoes do AJUDANTES do starter kit; antes ficavam no arena.h) */
-static inline double distancia(double x1, double y1, double x2, double y2) {
-    return hypot(x2 - x1, y2 - y1);
-}
-
-static inline double normalizar_angulo(double graus) {
-    double a = fmod(graus, 360.0);
-    return a < 0 ? a + 360.0 : a;
-}
-
-static inline double angulo_para(double x1, double y1, double x2, double y2) {
-    return normalizar_angulo(atan2(y2 - y1, x2 - x1) * 180.0 / M_PI);
-}
-
-static inline double diferenca_angulo(double de, double para) {
-    double d = normalizar_angulo(para - de);
-    return d > 180.0 ? d - 360.0 : d;
-}
-
-/* Bot de teste (C) - Sobrevivente: foge de perigos e fica perto do centro. */
 
 #define CENTRO 500.0
 
-Acao pensar(const Estado *e) {
-    Acao a = {0};
-    double alvo_x = CENTRO, alvo_y = CENTRO;
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
 
-    /* Se estiver dentro de algum perigo, foge na direção oposta */
-    for (int i = 0; i < e->n_hazards; i++) {
-        const Hazard *h = &e->hazards[i];
-        double d = distancia(e->self.x, e->self.y, h->x, h->y);
-        if (h->tipo == HAZARD_ARTILHARIA && d < h->radius + 30) {
-            alvo_x = e->self.x + (e->self.x - h->x);
-            alvo_y = e->self.y + (e->self.y - h->y);
-            a.shield = e->self.energy > 60;
-            break;
+Acao pensar(const Estado *e) {
+    Tanque meu = e->eu;
+    Acao acao;
+    acao.mover = PARADO;
+    acao.direcao = meu.angulo_chassi;
+    acao.angulo_torre = meu.angulo_torre;
+    acao.atirar = 0;
+    acao.ligar_escudo = 0;
+    double alvo_x = CENTRO;
+    double alvo_y = CENTRO;
+
+    /* Dentro de uma artilharia: foge na direção oposta ao centro dela */
+    int fugindo = 0;
+    for (int i = 0; i < e->n_perigos; i++) {
+        Perigo p = e->perigos[i];
+        double d = distancia(meu.x, meu.y, p.x, p.y);
+        if (fugindo == 0 && p.tipo == PERIGO_ARTILHARIA && d < p.raio + 30) {
+            alvo_x = meu.x + (meu.x - p.x);
+            alvo_y = meu.y + (meu.y - p.y);
+            if (meu.energia > 60) {
+                acao.ligar_escudo = 1;
+            }
+            fugindo = 1;
         }
     }
 
-    double ang = angulo_para(e->self.x, e->self.y, alvo_x, alvo_y);
-    double diff = diferenca_angulo(e->self.angle, ang);
-    a.turn = diff > 10 ? 1.0 : (diff < -10 ? -1.0 : 0.0);
-    a.throttle = distancia(e->self.x, e->self.y, alvo_x, alvo_y) > 60 ? 1.0 : 0.0;
-
-    /* Atira no inimigo mais próximo sem parar de se mover */
-    if (e->n_inimigos > 0) {
-        a.turret_angle = angulo_para(e->self.x, e->self.y, e->inimigos[0].x, e->inimigos[0].y);
-        a.shoot = e->self.cooldown <= 0 && e->self.energy >= 40;
-    } else {
-        a.turret_angle = e->self.turret_angle;
+    if (distancia(meu.x, meu.y, alvo_x, alvo_y) > 60) {
+        acao.direcao = angulo_para(meu.x, meu.y, alvo_x, alvo_y);
+        acao.mover = FRENTE;
     }
-    return a;
+
+    if (e->n_inimigos > 0) {
+        Inimigo in = e->inimigos[0];
+        acao.angulo_torre = angulo_para(meu.x, meu.y, in.x, in.y);
+        if (meu.frames_para_atirar == 0 && meu.energia >= 40) {
+            acao.atirar = 1;
+        }
+    }
+    return acao;
+}
+
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double graus = atan2(y2 - y1, x2 - x1) * 180.0 / M_PI;
+    if (graus < 0) {
+        graus = graus + 360.0;
+    }
+    return graus;
 }

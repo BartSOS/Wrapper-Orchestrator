@@ -1,14 +1,14 @@
-import com.google.gson.JsonObject;
-import com.google.gson.JsonArray;
+// Bot de teste (Java) - Peão: anda de ré girando sem parar e atira o tempo todo.
+public class Solution extends Arena {
 
-public class Solution {
-    public static JsonObject pensar(JsonObject estado) {
-        JsonObject acao = new JsonObject();
-        acao.addProperty("throttle", -1.0); // Sempre em marcha re
-        acao.addProperty("turn", 1.0);      // Girando igual um peao
-        acao.addProperty("turret_angle", 0.0);
-        acao.addProperty("shoot", true);    // Atirando loucamente
-        acao.addProperty("shield", false);
+    public static Acao pensar(Estado e) {
+        Tanque meu = e.eu;
+        Acao acao = new Acao();
+        acao.mover = RE;                          // sempre de ré
+        acao.direcao = meu.angulo_chassi + 9.0;   // gira 9 graus por frame, igual um peão
+        acao.angulo_torre = 0.0;
+        acao.atirar = true;                       // atira sempre que pode
+        acao.ligar_escudo = false;
         return acao;
     }
 }

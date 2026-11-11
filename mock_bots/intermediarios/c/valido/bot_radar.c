@@ -1,34 +1,23 @@
+/* Bot de teste (C) - Radar: mira e persegue o inimigo mais próximo. */
 #include "arena.h"
 
-/* Matematica basica (as mesmas funcoes do AJUDANTES do starter kit; antes ficavam no arena.h) */
-static inline double distancia(double x1, double y1, double x2, double y2) {
-    return hypot(x2 - x1, y2 - y1);
-}
-
-static inline double normalizar_angulo(double graus) {
-    double a = fmod(graus, 360.0);
-    return a < 0 ? a + 360.0 : a;
-}
-
-static inline double angulo_para(double x1, double y1, double x2, double y2) {
-    return normalizar_angulo(atan2(y2 - y1, x2 - x1) * 180.0 / M_PI);
-}
-
-static inline double diferenca_angulo(double de, double para) {
-    double d = normalizar_angulo(para - de);
-    return d > 180.0 ? d - 360.0 : d;
-}
-
-/* Bot de teste (C) - Radar: mira e persegue o inimigo mais próximo. */
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
 
 Acao pensar(const Estado *e) {
-    Acao a = {0};
-    a.turret_angle = e->self.turret_angle;
+    Tanque meu = e->eu;
+    Acao acao;
+    acao.mover = PARADO;
+    acao.direcao = meu.angulo_chassi;
+    acao.angulo_torre = meu.angulo_torre;
+    acao.atirar = 0;
+    acao.ligar_escudo = 0;
 
     int alvo = -1;
     double menor = 1e9;
     for (int i = 0; i < e->n_inimigos; i++) {
-        double d = distancia(e->self.x, e->self.y, e->inimigos[i].x, e->inimigos[i].y);
+        Inimigo in = e->inimigos[i];
+        double d = distancia(meu.x, meu.y, in.x, in.y);
         if (d < menor) {
             menor = d;
             alvo = i;
@@ -36,18 +25,39 @@ Acao pensar(const Estado *e) {
     }
 
     if (alvo >= 0) {
-        const Inimigo *in = &e->inimigos[alvo];
-        double ang = angulo_para(e->self.x, e->self.y, in->x, in->y);
-        double diff = diferenca_angulo(e->self.angle, ang);
-        a.turret_angle = ang;
-        a.turn = diff > 5 ? 1.0 : (diff < -5 ? -1.0 : 0.0);
-        a.throttle = menor > 200 ? 1.0 : 0.2;
-        a.shoot = menor < 450 && e->self.cooldown <= 0 && e->self.energy >= 20;
+        Inimigo in = e->inimigos[alvo];
+        double para_o_alvo = angulo_para(meu.x, meu.y, in.x, in.y);
+        acao.angulo_torre = para_o_alvo;
+        acao.direcao = para_o_alvo;
+        if (menor > 200) {
+            acao.mover = FRENTE;
+        } else {
+            acao.mover = 0.2;
+        }
+        if (menor < 450 && meu.frames_para_atirar == 0 && meu.energia >= 20) {
+            acao.atirar = 1;
+        }
     } else {
-        a.throttle = 0.5;
-        a.turn = 0.3;
+        acao.mover = 0.5;                     /* ninguém à vista: anda em círculo */
+        acao.direcao = meu.angulo_chassi + 3;
     }
 
-    a.shield = e->self.hp < 30 && e->self.energy > 60;
-    return a;
+    if (meu.vida < 30 && meu.energia > 60) {
+        acao.ligar_escudo = 1;
+    }
+    return acao;
+}
+
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double graus = atan2(y2 - y1, x2 - x1) * 180.0 / M_PI;
+    if (graus < 0) {
+        graus = graus + 360.0;
+    }
+    return graus;
 }

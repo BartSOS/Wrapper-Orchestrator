@@ -1,6 +1,18 @@
 # Bot de referência da fase 01_andar: passa com 3 balões.
-# Gira no lugar até o chassi apontar para o ponto e anda com throttle 1.
+# Gira no lugar até o chassi apontar para o ponto e anda com mover = FRENTE.
+from arena import *
 import math
+
+
+def pensar(estado):
+    meu = estado.eu
+    ponto = estado.pontos[0]
+    para_o_ponto = angulo_para(meu.x, meu.y, ponto.x, ponto.y)
+    falta = diferenca_angulo(meu.angulo_chassi, para_o_ponto)
+    acao = Acao()
+    acao.direcao = para_o_ponto
+    acao.mover = FRENTE if abs(falta) < 45 else PARADO
+    return acao
 
 
 def angulo_para(x1, y1, x2, y2):
@@ -10,12 +22,3 @@ def angulo_para(x1, y1, x2, y2):
 def diferenca_angulo(de, para):
     d = (para - de) % 360
     return d - 360 if d > 180 else d
-
-
-def pensar(estado):
-    eu = estado["self"]
-    ponto = estado["objetivo"]["pontos"][0]
-    falta = diferenca_angulo(eu["angle"], angulo_para(eu["x"], eu["y"], ponto["x"], ponto["y"]))
-    turn = max(-1.0, min(1.0, falta / 9.0))
-    throttle = 1.0 if abs(falta) < 45 else 0.0
-    return {"throttle": throttle, "turn": turn, "shoot": False, "shield": False}

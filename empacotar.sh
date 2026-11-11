@@ -11,7 +11,7 @@
 #
 # Uso:
 #   bash empacotar.sh --saida DIR [--engine] [--linguagens]   (sem as duas opções: gera ambos)
-#   bash empacotar.sh --sincronizar-kit     copia arena.h, json.hpp e gson.jar para o starter kit
+#   bash empacotar.sh --sincronizar-kit     copia os arquivos de apoio (arena.h, arena.hpp, Arena.java, arena.py), json.hpp, gson.jar e o verificador para o starter kit
 #   bash empacotar.sh --conferir-kit        confere se o starter kit tem as mesmas cópias (código 1 se não)
 # O starter kit é o repositório Starter-Kit-Game-Jam, ao lado deste: GAMEJAM_KIT_DIR
 # (padrão ../Starter-Kit-Game-Jam, relativo à raiz do battle-orchestrator).
@@ -43,7 +43,11 @@ done
 # Cópias do kit do participante: origem (relativa a esta raiz) -> destino (relativo ao kit)
 KIT_DIR="${GAMEJAM_KIT_DIR:-${RAIZ}/../Starter-Kit-Game-Jam}"
 KIT_COPIAS=(
+    # arquivos de apoio (tipos e constantes em português) que a equipe importa
     "wrappers/arena.h|c/arena.h"
+    "wrappers/arena.hpp|cpp/arena.hpp"
+    "wrappers/Arena.java|java/Arena.java"
+    "wrappers/arena.py|python/arena.py"
     "engine/nlohmann/json.hpp|cpp/nlohmann/json.hpp"
     "libs/gson-2.10.1.jar|java/gson.jar"
     # verificar.py do kit: a mesma montagem e as mesmas checagens da partida
@@ -158,9 +162,9 @@ PY
 # pasta|arquivos de wrappers/|engine/nlohmann/json.hpp?|libs/gson?
 PACOTES=(
     "c|build_bot.sh arena.h c_wrapper.cpp checar_fonte.py|sim|nao"
-    "cpp|build_bot.sh cpp_header.hpp cpp_footer.cpp checar_fonte.py|sim|nao"
-    "java|build_bot.sh wrapper.java checar_fonte.py|nao|sim"
-    "python3|build_bot.sh wrapper.py checar_python.py|nao|nao"
+    "cpp|build_bot.sh arena.hpp cpp_header.hpp cpp_footer.cpp checar_fonte.py|sim|nao"
+    "java|build_bot.sh Arena.java wrapper.java checar_fonte.py|nao|sim"
+    "python3|build_bot.sh arena.py wrapper.py checar_python.py|nao|nao"
 )
 
 empacotar_linguagens() {

@@ -607,12 +607,12 @@ private:
     // quando o trajeto sustenta o diagnóstico. origem: de onde o trecho partiu.
     std::string faltouAlcancar(const std::string& rotulo, const std::string& origem, const Ponto& p, const Trajeto& t) const {
         if (!t.tem) return rotulo + ".";
-        static const std::string DICA_RUMO = " Confira o sinal do turn e se o ângulo está em graus.";
+        static const std::string DICA_RUMO = " Confira se a direcao é o ângulo da sua posição até o ponto, em graus (use angulo_para).";
         std::string alvo = "precisava chegar a até " + inteiro(p.raio) + ".";
         if (t.andou < 10) {
             std::string s = rotulo + ": o tanque quase não se mexeu. Andou " + inteiro(t.andou) + " unidades e ficou a " +
                             inteiro(t.dFinal) + " do ponto; " + alvo;
-            if (!morte_) s += " Confira se o bot envia throttle diferente de 0.";
+            if (!morte_) s += " Confira se o bot envia mover = FRENTE (ou outro valor diferente de 0).";
             return s;
         }
         if (t.tickMaisPerto == t.tickInicio) {
@@ -723,24 +723,24 @@ private:
         if (r.ok) {
             r.detalhe = req + " (do frame " + std::to_string(inicio) + " ao " + std::to_string(r.tick) + "; limite " +
                         std::to_string(lim) + ")";
-            r.motivo = "Parou no ponto " + p.id + " no frame " + std::to_string(inicio) + " e ficou " + std::to_string(precisa) +
+            r.motivo = "Entrou no ponto " + p.id + " no frame " + std::to_string(inicio) + " e ficou " + std::to_string(precisa) +
                        " frames seguidos (até o frame " + std::to_string(r.tick) + ").";
             return r;
         }
         if (entradas == 0) {
-            r.detalhe = "nunca entrou no raio do ponto " + p.id + "; mais perto: " + inteiro(t.dMaisPerto) + " unidades";
-            r.motivo = faltouAlcancar("Nunca entrou no raio do ponto " + p.id, "desde a largada", p, t);
+            r.detalhe = "nunca entrou no ponto " + p.id + "; mais perto: " + inteiro(t.dMaisPerto) + " unidades";
+            r.motivo = faltouAlcancar("Nunca entrou no ponto " + p.id, "desde a largada", p, t);
             return r;
         }
         r.detalhe = "máximo de " + std::to_string(melhor) + " de " + std::to_string(precisa) + " frames seguidos no ponto " + p.id;
-        r.motivo = "Entrou no raio do ponto " + p.id + (entradas == 1 ? "" : " " + std::to_string(entradas) + " vezes") +
+        r.motivo = "Entrou no ponto " + p.id + (entradas == 1 ? "" : " " + std::to_string(entradas) + " vezes") +
                    ", mas ficou no máximo " + std::to_string(melhor) + " frames seguidos; precisava de " + std::to_string(precisa) +
                    " até o frame " + std::to_string(lim) + ".";
         if (seguidos > 0) {
             r.motivo += " Ainda estava lá dentro, desde o frame " + std::to_string(inicio) + ", quando o prazo acabou.";
         } else if (tickSaida >= 0) {
             r.motivo += " Saiu no frame " + std::to_string(tickSaida) + " a " + umDecimal(velSaida) +
-                        " unidades por frame. Reduza o throttle perto do ponto e mande throttle 0 lá dentro.";
+                        " unidades por frame. Dentro do ponto, use mover = PARADO: o tanque para no mesmo frame.";
         }
         return r;
     }
@@ -870,7 +870,7 @@ private:
         r.motivo += ".";
         int tiros = tirosAte(lim);
         if (tiros == 0) {
-            r.motivo += " Nenhum tiro saiu. Confira: o tiro só sai com shoot verdadeiro, cooldown 0 e energia de pelo menos 20.";
+            r.motivo += " Nenhum tiro saiu. Confira: o tiro só sai com atirar = 1 (true), frames_para_atirar igual a 0 e energia de pelo menos 20.";
             return r;
         }
         int erros = 0;
@@ -889,7 +889,7 @@ private:
                 r.motivo += "; o que passou mais perto errou o " + melhorErro->alvoMaisPerto + " por " +
                             inteiro(std::max(0.0, melhorErro->menor - RAIO_TANQUE - RAIO_PROJETIL)) + " unidades (tiro do frame " +
                             std::to_string(melhorErro->tickTiro) + ")";
-            r.motivo += ". Confira se o turret_angle está em graus e aponta da sua posição para o alvo.";
+            r.motivo += ". Confira se o angulo_torre está em graus e aponta da sua posição para o alvo (use angulo_para).";
         }
         return r;
     }
@@ -924,7 +924,7 @@ private:
             else if (parado)
                 r.motivo += " O tanque " + mexeu + ".";
             // A dica de fugir só faz sentido para quem morreu de bombardeio sem sair do lugar
-            if (parado && q.artilharia_perto) r.motivo += " Leia estado[\"hazards\"] e fuja assim que o aviso aparecer.";
+            if (parado && q.artilharia_perto) r.motivo += " Leia a lista de perigos do estado e fuja assim que o aviso aparecer.";
             return r;
         }
         // Vida no último quadro até o limite

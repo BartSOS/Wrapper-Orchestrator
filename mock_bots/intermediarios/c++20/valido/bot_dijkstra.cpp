@@ -1,31 +1,44 @@
-#include <cmath>
+// Bot de teste (C++20) - Sniper: fica parado, mira no inimigo mais próximo e atira de longe.
+#include "arena.hpp"
+using namespace std;
 
-json pensar(const json& estado) {
-    const auto& self = estado["self"];
-    double x = self["x"].get<double>();
-    double y = self["y"].get<double>();
-    double angulo = self["angle"].get<double>();
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
 
-    json acao;
-    acao["throttle"] = 0.0; // Fica parado (Sniper)
-    acao["turn"] = 0.0;
-    acao["turret_angle"] = std::fmod(angulo + 5.0, 360.0); // Radar giratorio
-    acao["shoot"] = false;
-    acao["shield"] = false;
+Acao pensar(const Estado& e) {
+    Tanque meu = e.eu;
+    Acao acao;
+    acao.mover = PARADO;                       // fica parado (sniper)
+    acao.direcao = meu.angulo_chassi;
+    acao.angulo_torre = meu.angulo_chassi + 5.0;  // sem inimigo: torre um pouco ao lado
+    acao.atirar = false;
+    acao.ligar_escudo = false;
 
-    double menor_dist = 9999.0;
-    for (const auto& inimigo : estado["enemies"]) {
-        double dist = std::hypot(inimigo["x"].get<double>() - x, inimigo["y"].get<double>() - y);
-        if (dist < menor_dist) {
-            menor_dist = dist;
-            double alvo_x = inimigo["x"].get<double>() - x;
-            double alvo_y = inimigo["y"].get<double>() - y;
-            double angulo_alvo = std::fmod((std::atan2(alvo_y, alvo_x) * 180.0 / M_PI) + 360.0, 360.0);
-            
-            acao["turret_angle"] = angulo_alvo;
-            if (menor_dist < 800.0) acao["shoot"] = true; // Atira de longe
+    double menor = 9999.0;
+    for (int i = 0; i < e.n_inimigos; i++) {
+        Inimigo in = e.inimigos[i];
+        double d = distancia(meu.x, meu.y, in.x, in.y);
+        if (d < menor) {
+            menor = d;
+            acao.angulo_torre = angulo_para(meu.x, meu.y, in.x, in.y);
+            if (d < 800.0) {
+                acao.atirar = true;            // atira de longe
+            }
         }
     }
-
     return acao;
+}
+
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;
+    double dy = y2 - y1;
+    return sqrt(dx * dx + dy * dy);
+}
+
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double graus = atan2(y2 - y1, x2 - x1) * 180.0 / M_PI;
+    if (graus < 0) {
+        graus = graus + 360.0;
+    }
+    return graus;
 }

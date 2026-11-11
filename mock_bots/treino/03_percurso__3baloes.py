@@ -1,8 +1,32 @@
 # Bot de referência da fase 03_percurso: passa com 3 balões.
 # Guarda o índice do próximo ponto numa variável global e anda até ele.
+from arena import *
 import math
 
 proximo = 0
+
+
+def pensar(estado):
+    global proximo
+    meu = estado.eu
+    pontos = estado.pontos
+    acao = Acao()
+    if proximo < len(pontos):
+        p = pontos[proximo]
+        if distancia(meu.x, meu.y, p.x, p.y) <= p.raio * 0.8:
+            proximo += 1
+    if proximo >= len(pontos):
+        return acao                                # PARADO
+    p = pontos[proximo]
+    para_o_ponto = angulo_para(meu.x, meu.y, p.x, p.y)
+    falta = diferenca_angulo(meu.angulo_chassi, para_o_ponto)
+    acao.direcao = para_o_ponto
+    acao.mover = FRENTE if abs(falta) < 45 else PARADO
+    return acao
+
+
+def distancia(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
 
 
 def angulo_para(x1, y1, x2, y2):
@@ -12,20 +36,3 @@ def angulo_para(x1, y1, x2, y2):
 def diferenca_angulo(de, para):
     d = (para - de) % 360
     return d - 360 if d > 180 else d
-
-
-def pensar(estado):
-    global proximo
-    eu = estado["self"]
-    pontos = estado["objetivo"]["pontos"]
-    if proximo < len(pontos):
-        p = pontos[proximo]
-        if math.hypot(p["x"] - eu["x"], p["y"] - eu["y"]) <= p["raio"] * 0.8:
-            proximo += 1
-    if proximo >= len(pontos):
-        return {"throttle": 0.0, "turn": 0.0, "shoot": False, "shield": False}
-    p = pontos[proximo]
-    falta = diferenca_angulo(eu["angle"], angulo_para(eu["x"], eu["y"], p["x"], p["y"]))
-    turn = max(-1.0, min(1.0, falta / 9.0))
-    throttle = 1.0 if abs(falta) < 45 else 0.0
-    return {"throttle": throttle, "turn": turn, "shoot": False, "shield": False}

@@ -3,11 +3,17 @@
 # O build_bot.sh monta o executável do bot assim:
 #     #!/usr/bin/env python3
 #     _FONTE_DA_EQUIPE = "<código da equipe em base64>"
+#     _FONTE_ARENA = "<wrappers/arena.py em base64>"
 #     <este arquivo>
 # A saída é protegida ANTES de o código da equipe rodar: um print no nível do
 # arquivo (ou em sys.__stdout__) vai para o stderr e nunca chega à engine.
+# O arena.py vira o módulo "arena" (o "from arena import *" da equipe). Cada
+# estado chega ao pensar() como arena.Estado (nomes em português, e também o
+# dict original), e a Acao devolvida é traduzida para o protocolo da engine
+# (mover -> throttle, direcao -> turn, ...). Chaves antigas (throttle, turn...)
+# continuam aceitas, com um [AVISO] no stderr.
 # Toda linha de estado recebe exatamente uma resposta: se o pensar() falhar ou
-# devolver algo que não é um objeto JSON, a resposta é a ação vazia {}.
+# devolver algo que não é uma Acao (nem um dict), a resposta é a ação vazia {}.
 # =============================================================================
 
 import base64
@@ -36,7 +42,17 @@ def _erro(titulo):
     sys.stderr.flush()
 
 
-# 2. Código da equipe, num módulo de verdade ("bot"), com o nome de arquivo e os
+# 2. Arquivo de apoio (arena.py), registrado como módulo "arena" antes do código da equipe
+def _carregar_arena():
+    modulo = types.ModuleType("arena")
+    modulo.__file__ = "arena.py"
+    sys.modules["arena"] = modulo
+    fonte = base64.b64decode(_FONTE_ARENA).decode("utf-8-sig")
+    exec(compile(fonte, "arena.py", "exec"), modulo.__dict__)
+    return modulo
+
+
+# 3. Código da equipe, num módulo de verdade ("bot"), com o nome de arquivo e os
 #    números de linha originais nos tracebacks
 def _carregar_bot():
     modulo = types.ModuleType("bot")
@@ -50,24 +66,23 @@ def _carregar_bot():
     return modulo.__dict__.get("pensar")
 
 
-# 3. Laço: uma resposta por estado, sempre
-def main_loop(pensar):
+# 4. Laço: uma resposta por estado, sempre
+def main_loop(arena, pensar):
     for linha in sys.stdin:
         linha = linha.strip()
         if not linha:
             continue
         texto = "{}"
         try:
-            estado_arena = json.loads(linha)
+            estado = arena.Estado(json.loads(linha))
             if pensar is None:
                 raise NameError("a função pensar(estado) não foi definida")
-            acao = pensar(estado_arena)
-            if not isinstance(acao, dict):
-                raise TypeError(f"pensar() devolveu {type(acao).__name__}, e não um dict")
-            texto = json.dumps(acao, allow_nan=False)
+            acao = pensar(estado)
+            texto = json.dumps(arena._traduzir_acao(acao, estado), allow_nan=False)
         except (Exception, SystemExit):  # noqa: BLE001
-            _erro("no pensar(): a ação deste tick foi {} (parado)")
+            _erro("no pensar(): neste frame o tanque ficou parado")
         enviar_comando(texto)
 
 
-main_loop(_carregar_bot())
+_ARENA = _carregar_arena()
+main_loop(_ARENA, _carregar_bot())

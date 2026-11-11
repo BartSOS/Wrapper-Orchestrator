@@ -13,6 +13,7 @@ Uso direto:     python3 simulador.py <fase.json> <bot.py> <seed> <saida.json>
 """
 import json
 import math
+import os
 import random
 import sys
 import types
@@ -29,12 +30,27 @@ def _sortear(v, rng):
     return float(v)
 
 
+WRAPPERS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+                        "wrappers")
+
+
 def carregar_bot(caminho):
+    """Carrega um bot.py (API em português, from arena import *) e devolve uma função
+    estado_da_engine (dict) -> ação da engine (dict), com a mesma tradução do wrapper real
+    (wrappers/arena.py: Estado na entrada, _traduzir_acao na saída)."""
+    if WRAPPERS not in sys.path:
+        sys.path.insert(0, WRAPPERS)
+    import arena  # noqa: E402  (wrappers/arena.py, o mesmo arquivo de apoio do servidor)
     with open(caminho, encoding="utf-8") as f:
         fonte = f.read()
     mod = types.ModuleType("bot")
     exec(compile(fonte, caminho, "exec"), mod.__dict__)
-    return mod.__dict__["pensar"]
+    pensar = mod.__dict__["pensar"]
+
+    def traduzido(bruto):
+        estado = arena.Estado(bruto)
+        return arena._traduzir_acao(pensar(estado), estado)
+    return traduzido
 
 
 def simular(fase, pensar, seed, morrer_no_tick=None):

@@ -2,15 +2,15 @@
   "id": "01_andar",
   "ordem": 1,
   "bloco": "movimento",
-  "titulo": "Andar até um ponto",
-  "conceito": "throttle, turn e ângulo até o alvo",
-  "texto": "Leve o tanque até o ponto B. A posição do ponto muda a cada tentativa: leia estado[\"objetivo\"][\"pontos\"].",
+  "titulo": "Andar até o ponto B",
+  "conceito": "mover, direcao e o ângulo até o ponto",
+  "texto": "Leve o tanque até o ponto B: basta entrar no círculo do ponto. A posição de B muda a cada tentativa, então procure na lista pontos do estado o ponto com id \"B\".",
   "dicas": [
-    "angulo_para dá a direção do ponto em graus; atan2 sozinho dá radianos.",
-    "diferenca_angulo(meu.angle, alvo) diz para que lado girar (turn de -1 a 1, 9 graus por frame).",
-    "Com throttle 1 o tanque anda 5 unidades por frame para onde o chassi aponta."
+    "direcao = angulo_para(sua posição, ponto B): o tanque gira sozinho até essa direção, 9 graus por frame.",
+    "Com mover = FRENTE o tanque anda 5 unidades por frame para onde o chassi aponta.",
+    "angulo_para já devolve graus; atan2 sozinho devolve radianos."
   ],
-  "ajudantes": ["eu", "angulo_para", "diferenca_angulo", "distancia", "montar_acao"],
+  "ajudantes": ["angulo_para", "distancia"],
   "cenario": {
     "max_ticks": 400,
     "jogador": {"x": 150, "y": [400, 600], "angulo": [0, 360], "hp": 100, "energia": 100},

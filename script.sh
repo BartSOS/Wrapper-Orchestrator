@@ -32,7 +32,8 @@
 # de sempre. A engine, o avaliar_fase e o resto do script continuam como root. Um vigia
 # encerra o bot que passar do limite de disco/arquivos; ao terminar, todo processo e
 # arquivo dos uids dos bots é apagado. O stderr de cada bot vai para build/logs/<bot>.stderr
-# (primeiros 64 KB) e as linhas "ISOLAMENTO-OK|FALHOU <caso>" aparecem no log da partida.
+# (primeiros 64 KB) e as linhas "ISOLAMENTO-OK|FALHOU <caso>" e "[AVISO] <texto>" (avisos do
+# wrapper, como uma chave antiga na ação) aparecem no log da partida.
 # Sem a variável nada muda (uid único, /tmp comum, stderr dos bots descartado).
 # ==============================================================================
 
@@ -727,6 +728,11 @@ isolamento_relatorio() {
         while IFS= read -r linha; do
             echo "  [ISOLAMENTO] ${NOMES_BOTS[$i]}: ${linha}"
         done < <(grep -aE '^ISOLAMENTO-(OK|FALHOU) [a-z_]{1,40}$' "${saida}" 2> /dev/null | head -n 20)
+        # Avisos da camada de tradução do wrapper (chave antiga ou desconhecida na ação,
+        # resposta vazia): a equipe vê no resultado do treino (TreinoService).
+        while IFS= read -r linha; do
+            echo "  [AVISO] ${NOMES_BOTS[$i]}: ${linha#\[AVISO\] }"
+        done < <(grep -aE '^\[AVISO\] .' "${saida}" 2> /dev/null | head -n 10 | cut -c1-200 | LC_ALL=C tr -cd '[:print:]\n')
     done
 }
 

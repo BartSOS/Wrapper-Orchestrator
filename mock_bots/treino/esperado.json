@@ -5,7 +5,7 @@
   "01_andar__falha": {"passou": false, "baloes": 0, "motivo_contem": "Não chegou ao ponto B"},
   "02_parar__3baloes": {"passou": true, "baloes": 3},
   "02_parar__1balao": {"passou": true, "baloes": 1},
-  "02_parar__falha": {"passou": false, "baloes": 0, "motivo_contem": "raio do ponto B"},
+  "02_parar__falha": {"passou": false, "baloes": 0, "motivo_contem": "no ponto B"},
   "03_percurso__3baloes": {"passou": true, "baloes": 3},
   "03_percurso__1balao": {"passou": true, "baloes": 1},
   "03_percurso__falha": {"passou": false, "baloes": 0, "motivo_contem": "fora da ordem"},

@@ -1,6 +1,25 @@
 # Bot de referência da fase 02_parar: passa com 3 balões.
-# Gira parado, anda e reduz o throttle quando falta menos de 5 unidades; dentro do raio, para.
+# Gira parado, anda e reduz o mover quando falta menos de 5 unidades; dentro do raio, para.
+from arena import *
 import math
+
+
+def pensar(estado):
+    meu = estado.eu
+    ponto = estado.pontos[0]
+    acao = Acao()
+    dist = distancia(meu.x, meu.y, ponto.x, ponto.y)
+    if dist <= ponto.raio * 0.5:
+        return acao                                # PARADO
+    para_o_ponto = angulo_para(meu.x, meu.y, ponto.x, ponto.y)
+    falta = diferenca_angulo(meu.angulo_chassi, para_o_ponto)
+    acao.direcao = para_o_ponto
+    acao.mover = min(1.0, dist / 5.0) if abs(falta) < 20 else PARADO
+    return acao
+
+
+def distancia(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
 
 
 def angulo_para(x1, y1, x2, y2):
@@ -10,15 +29,3 @@ def angulo_para(x1, y1, x2, y2):
 def diferenca_angulo(de, para):
     d = (para - de) % 360
     return d - 360 if d > 180 else d
-
-
-def pensar(estado):
-    eu = estado["self"]
-    ponto = estado["objetivo"]["pontos"][0]
-    dist = math.hypot(ponto["x"] - eu["x"], ponto["y"] - eu["y"])
-    if dist <= ponto["raio"] * 0.5:
-        return {"throttle": 0.0, "turn": 0.0, "shoot": False, "shield": False}
-    falta = diferenca_angulo(eu["angle"], angulo_para(eu["x"], eu["y"], ponto["x"], ponto["y"]))
-    turn = max(-1.0, min(1.0, falta / 9.0))
-    throttle = min(1.0, dist / 5.0) if abs(falta) < 20 else 0.0
-    return {"throttle": throttle, "turn": turn, "shoot": False, "shield": False}

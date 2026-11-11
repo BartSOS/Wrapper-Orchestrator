@@ -1,48 +1,37 @@
+# Bot de teste (Python 3) - Fuga (kiting): foge do inimigo mais próximo atirando para trás.
+from arena import *
 import math
 
+
 def pensar(estado):
-    me = estado.get("self", {})
-    x, y, ang = me.get("x", 0), me.get("y", 0), me.get("angle", 0)
-    energia = me.get("energy", 0)
-    cooldown = me.get("cooldown", 0)
+    meu = estado.eu
+    acao = Acao()
+    acao.mover = 0.8
+    acao.direcao = meu.angulo_chassi + 4.5      # sem inimigo: anda em círculo
 
-    acao = {
-        "throttle": 0.8,
-        "turn": 0.5,
-        "turret_angle": ang,
-        "shoot": False,
-        "shield": False
-    }
+    mais_proximo = None
+    menor = float("inf")
+    for inimigo in estado.inimigos:
+        d = distancia(meu.x, meu.y, inimigo.x, inimigo.y)
+        if d < menor:
+            menor = d
+            mais_proximo = inimigo
 
-    # Comportamento: Fuga Extrema (Kiting) e Sobrevivência
-    inimigo_mais_proximo = None
-    menor_dist = float('inf')
-    
-    for inimigo in estado.get("enemies", []):
-        d = math.hypot(inimigo["x"] - x, inimigo["y"] - y)
-        if d < menor_dist:
-            menor_dist = d
-            inimigo_mais_proximo = inimigo
-
-    if inimigo_mais_proximo:
-        # Foge atirando para trás (kiting)
-        alvo_ang = math.degrees(math.atan2(inimigo_mais_proximo["y"] - y, inimigo_mais_proximo["x"] - x))
-        fuga_ang = (alvo_ang + 180) % 360
-        
-        # Mira pro inimigo
-        acao["turret_angle"] = (alvo_ang + 360) % 360
-        
-        # Direção de fuga
-        diff = (fuga_ang - ang + 180) % 360 - 180
-        acao["turn"] = 1.0 if diff > 5 else (-1.0 if diff < -5 else 0.0)
-        acao["throttle"] = 1.0
-        
-        # Atira se possível e seguro
-        if menor_dist < 600 and cooldown == 0 and energia >= 15:
-            acao["shoot"] = True
-
-        # Escudo de pânico
-        if menor_dist < 200 and energia > 30:
-            acao["shield"] = True
-
+    if mais_proximo is not None:
+        para_o_inimigo = angulo_para(meu.x, meu.y, mais_proximo.x, mais_proximo.y)
+        acao.angulo_torre = para_o_inimigo       # mira no inimigo
+        acao.direcao = (para_o_inimigo + 180) % 360  # e anda para o lado oposto
+        acao.mover = FRENTE
+        if menor < 600 and meu.frames_para_atirar == 0 and meu.energia >= 15:
+            acao.atirar = True
+        if menor < 200 and meu.energia > 30:     # escudo de pânico
+            acao.ligar_escudo = True
     return acao
+
+
+def distancia(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
+
+
+def angulo_para(x1, y1, x2, y2):
+    return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 360

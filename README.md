@@ -107,7 +107,7 @@ Com artilharia programada, a aleatória fica desligada. Com só artilharia ou s�
 
 ### Saídas do modo fase
 
-- **Estado do bot:** ganha `"objetivo": {"pontos": [{"id": "B", "x": 800.0, "y": 512.3, "raio": 25.0}]}`, na ordem do arquivo. Em C: `e->n_pontos` e `e->pontos[i]` (`Ponto`: `id`, `x`, `y`, `raio`; `MAX_PONTOS` 16). No torneio a chave não existe e `n_pontos` é 0.
+- **Estado do bot:** ganha `"objetivo": {"pontos": [{"id": "B", "x": 800.0, "y": 512.3, "raio": 25.0}]}`, na ordem do arquivo. A equipe vê a lista `pontos` (`Ponto`: `id`, `x`, `y`, `raio`): `estado.pontos` em Python, `e.pontos` em C++ e Java, `e->pontos[i]` com `i < e->n_pontos` em C (`MAX_PONTOS` 16). No torneio a chave não existe e a lista vem vazia.
 - **`match_frames.json`:** o bloco `fase` é a primeira chave, com o cenário sorteado: `{id, seed, max_ticks, jogador, pontos[{id, ordem, x, y, raio}], alvos[{id, tank_id, x, y, hp, angulo}], artilharia, laser, itens, zona}`. Na artilharia programada, cada item traz `{tick, x, y, raio, criada}` (e `no_jogador: true`, com x/y efetivos ou `null` se não chegou a cair). Os alvos aparecem em `frames[].tanks` com `"alvo": true`, e `bots[]` só tem o jogador. O que a Unity desenha: `Boca-Game-Jam-Pet/desafio/VISUALIZADOR_WEB.md`, seção "Bloco fase".
 - **Teste:** `python3 mock_bots/treino_engine/testar_modo_fase.py` (WSL) roda os cenários de `mock_bots/treino_engine/` com bots nas 4 linguagens numa cópia em `/tmp/frente_engine/modo_fase` e confere tudo isso.
 
@@ -135,13 +135,37 @@ O que muda:
 
 ## 2. O que o Competidor Escreve
 
-Apenas a função `pensar(estado)`, chamada a cada tick. O competidor **não** escreve `main()`, não lê `stdin` e não faz parsing de JSON: os wrappers fazem isso.
+Apenas a função `pensar`, chamada a cada frame (= tick da engine, 0,1 s). O competidor **não** escreve `main()`, não lê `stdin` e não faz parsing de JSON: os wrappers fazem isso e entregam o estado e recebem a ação **em português**, por um arquivo de apoio por linguagem. A engine, o protocolo e o replay continuam em inglês; a tradução é toda dos wrappers.
 
-O ponto de partida da equipe é o starter kit, no repositório `Starter-Kit-Game-Jam` (`c/bot.c` + `arena.h`, `cpp/bot.cpp` + `nlohmann/json.hpp`, `java/MeuBot.java` + `gson.jar`, `python/bot.py` e o `README.md`). Cada arquivo traz uma seção de **ajudantes** editável (acessores do estado, montador da ação e matemática básica), descrita no `AJUDANTES.md` do kit (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`). O `arena.h`, o `json.hpp` e o `gson.jar` do kit são cópias dos daqui: `bash empacotar.sh --conferir-kit` / `--sincronizar-kit`.
+| Linguagem | Arquivo da equipe | Assinatura | Arquivo de apoio (em `wrappers/`) |
+| :--- | :--- | :--- | :--- |
+| C | `bot.c` | `Acao pensar(const Estado *e)` | `arena.h` (injetado com `-include`) |
+| C++ | `bot.cpp` | `Acao pensar(const Estado& e)` | `arena.hpp` (incluído pelo `cpp_header.hpp`, que usa a nlohmann) |
+| Java | `MeuBot.java` | `public static Acao pensar(Estado e)` em `public class MeuBot extends Arena` | `Arena.java` (+ `gson.jar`); os nomes `Arena` e `JavaRunner` são reservados |
+| Python | `bot.py` | `def pensar(estado):` com `from arena import *` | `arena.py` |
+
+O ponto de partida da equipe é o starter kit, no repositório `Starter-Kit-Game-Jam` (`c/`, `cpp/`, `java/`, `python/`, cada pasta com o bot e o arquivo de apoio, mais o `README.md` e o `verificar.py`). No fim de cada bot há uma seção `AJUDANTES (opcional: use, mude ou apague)` com `distancia`, `angulo_para` e `diferenca_angulo` (mesmos nomes nas 4 linguagens), descrita no `AJUDANTES.md` do kit (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`). Os arquivos de apoio, o `json.hpp` e o `gson.jar` do kit são cópias dos daqui: `bash empacotar.sh --conferir-kit` / `--sincronizar-kit`.
+
+**API antiga (compatibilidade):** `def pensar(estado)` que devolve dict com `throttle`/`turn`/`turret_angle`/`shoot`/`shield`, `json pensar(const json&)` em C++ e `public static JsonObject pensar(JsonObject)` em Java continuam aceitos, com um `[AVISO]` no log do bot quando a ação usa chaves antigas. Em C e nos structs do C++, os nomes antigos não compilam; o `build_bot.sh` traduz o erro do compilador (`o campo 'hp' agora se chama vida...`).
 
 O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, então só dá YES ao código que compila exatamente como na partida. `main()` próprio (C/C++), `package` em Java, import relativo, bloco `if __name__ == "__main__":` ou biblioteca fora da padrão em Python dão Compilation Error. O texto exato de cada mensagem (`ERRO DE VALIDACAO: ...` / `ERRO DE COMPILACAO: ...`) está no `ERROS_VALIDADOR.md` do kit (contrato C-K3, fora do zip).
 
 ### Entrada — `estado`
+
+O que a equipe vê (nomes iguais nas 4 linguagens; em C, as listas vêm com `n_inimigos`, `n_perigos`, `n_itens` e `n_pontos`):
+
+| Campo | Conteúdo |
+| :--- | :--- |
+| `frame` | número do frame (começa em 0) |
+| `eu` | `Tanque`: `id`, `x`, `y`, `vel_x`, `vel_y` (por frame), `angulo_chassi`, `angulo_torre`, `vida`, `energia`, `frames_para_atirar`, `escudo_ativo` |
+| `inimigos[]` | `Inimigo`: `id`, `x`, `y`, `vel_x`, `vel_y` |
+| `perigos[]` | `Perigo`: `id`, `tipo` (`PERIGO_ARTILHARIA`/`PERIGO_LASER`), `x`, `y`, `raio`, `frames_ate_impacto`, `angulo`, `frames_restantes` |
+| `itens[]` | `Item`: `id`, `tipo` (`ITEM_CURA`/`ITEM_ENERGIA`), `x`, `y` |
+| `pontos[]` | `Ponto`: `id`, `x`, `y`, `raio` (só nas fases de treino; no torneio vem vazia) |
+
+As constantes são textos em Python (`"ARTILHARIA"`, `"LASER"`, `"CURA"`, `"ENERGIA"`) e números nas outras linguagens. O wrapper converte `vx`/`vy` (por segundo) e `cooldown`/`timer`/`duration` (segundos) para unidades por frame e frames. Listas maiores que `MAX_INIMIGOS`/`MAX_PERIGOS`/`MAX_ITENS`/`MAX_PONTOS` (C) são truncadas.
+
+O JSON do protocolo (engine → wrapper), que a API antiga ainda recebe:
 
 ```json
 {
@@ -154,70 +178,81 @@ O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, 
 }
 ```
 
-`objetivo` só existe nas fases de treino (seção 1.2); no torneio a chave não vem.
+`objetivo` só existe nas fases de treino (seção 1.2); no torneio a chave não vem e `pontos` fica vazia.
 
 ### Saída — ação
 
-| Campo | Tipo | Faixa | Efeito |
+| Campo (equipe) | Valores | Efeito | Vira no protocolo |
 | :--- | :--- | :--- | :--- |
-| `throttle` | float | -1.0 a 1.0 | Aceleração (ré / frente) |
-| `turn` | float | -1.0 a 1.0 | Giro do chassi |
-| `turret_angle` | float | 0 a 360 (graus) | Direção da torre |
-| `shoot` | bool | — | Disparar |
-| `shield` | bool | — | Escudo |
+| `mover` | `FRENTE`, `PARADO`, `RE` ou de -1 a 1 | anda (5 unidades por frame no máximo) | `throttle` |
+| `direcao` | graus absolutos; ausente (`None`/`NAN`) = mantém | o chassi gira até 9° por frame, pelo menor lado, até apontar para lá | `turn` = diferença / 9, limitada a [-1, 1] |
+| `angulo_torre` | graus absolutos; ausente = mantém | a torre aponta na hora | `turret_angle` |
+| `atirar` | 1/0 ou true/false (Java: `boolean`) | dispara, se puder | `shoot` |
+| `ligar_escudo` | 1/0 ou true/false (Java: `boolean`) | escudo neste frame | `shield` |
 
-Campos ausentes assumem 0 ou `false`; a torre mantém o ângulo atual.
+Padrões: Python `Acao(mover=PARADO, direcao=None, angulo_torre=None, atirar=False, ligar_escudo=False)`; em C++ e Java os ângulos começam em NaN (= mantém); em C o modelo preenche os 5 campos. Valor que não é número é ignorado com `[AVISO]`. Em Python, atribuir um campo que não existe na `Acao` dá `AttributeError` (com o nome novo, se for um antigo).
 
 ### Modelos por linguagem
 
-**C (C99)**: o cabeçalho `wrappers/arena.h` é injetado automaticamente e define as structs `Estado`, `Tanque`, `Inimigo`, `Hazard`, `Item` e `Acao`. As funções de matemática (`distancia()`, `angulo_para()`, `normalizar_angulo()` e `diferenca_angulo()`) ficam no `bot.c` do kit, à vista da equipe. O código do aluno é compilado com `gcc -std=c99` e ligado ao wrapper interno `wrappers/c_wrapper.cpp` (C++20), que converte o JSON nas structs. `printf()` do aluno vai para o `stderr` e não corrompe a comunicação. Listas maiores que `MAX_INIMIGOS`/`MAX_HAZARDS`/`MAX_ITENS` são truncadas.
+**C (C99)**: o `wrappers/arena.h` é injetado automaticamente (structs `Estado`, `Tanque`, `Inimigo`, `Perigo`, `Item`, `Ponto` e `Acao`, constantes `FRENTE`/`PARADO`/`RE`, `PERIGO_*`, `ITEM_*`). O código do aluno é compilado com `gcc -std=c99` e ligado ao wrapper interno `wrappers/c_wrapper.cpp` (C++20), que converte o JSON nas structs e a `Acao` no comando da engine. `printf()` do aluno vai para o `stderr` e não corrompe a comunicação.
 ```c
 Acao pensar(const Estado *e) {
-    Acao a = {0};
-    a.throttle = 1.0;
+    Acao a;
+    a.mover = FRENTE;
+    a.direcao = e->eu.angulo_chassi;
+    a.angulo_torre = e->eu.angulo_torre;
+    a.atirar = 0;
+    a.ligar_escudo = 0;
     if (e->n_inimigos > 0) {
-        const Inimigo *alvo = &e->inimigos[0];
-        a.turret_angle = angulo_para(e->self.x, e->self.y, alvo->x, alvo->y);
-        a.shoot = e->self.cooldown <= 0;
+        a.angulo_torre = angulo_para(e->eu.x, e->eu.y, e->inimigos[0].x, e->inimigos[0].y);
+        a.atirar = e->eu.frames_para_atirar == 0;
     }
     return a;
 }
 ```
 
-**Python 3**: a sintaxe é conferida na compilação e o wrapper é anexado ao final do código. `print()` do aluno é desviado para `stderr`.
+**Python 3**: a sintaxe é conferida na compilação; o `arena.py` e o wrapper vão junto. `print()` do aluno é desviado para `stderr`.
 ```python
+from arena import *
+
 def pensar(estado):
-    return {"throttle": 1.0, "turn": 0.5, "turret_angle": 90.0, "shoot": True, "shield": False}
+    acao = Acao(mover=FRENTE)
+    if estado.inimigos:
+        alvo = estado.inimigos[0]
+        acao.angulo_torre = angulo_para(estado.eu.x, estado.eu.y, alvo.x, alvo.y)
+        acao.atirar = estado.eu.frames_para_atirar == 0
+    return acao
 ```
 
-**C++20**: o código é compilado com `-include cpp_header.hpp` (que já expõe `json`, da nlohmann, como cabeçalho pré-compilado) e ligado ao `cpp_footer.o` (o `main`, também pré-compilado). `std::cout`/`printf` do aluno vão para o `stderr`. Se a ligação falhar (ex.: `pensar` declarada `inline`), o bot é recompilado como antes, numa única unidade com cabeçalho + código + rodapé.
+**C++20**: o código é compilado com `-include cpp_header.hpp` (pré-compilado; inclui a nlohmann e o `arena.hpp`) e ligado ao `cpp_footer.o` (o `main`, também pré-compilado). `std::cout`/`printf` do aluno vão para o `stderr`. Se a ligação falhar (ex.: `pensar` declarada `inline`), o bot é recompilado como antes, numa única unidade com cabeçalho + código + rodapé.
 ```cpp
-json pensar(const json& estado) {
-    json acao;
-    acao["throttle"] = 1.0;
-    acao["turn"] = 0.0;
-    acao["turret_angle"] = estado["self"]["angle"].get<double>();
-    acao["shoot"] = false;
-    acao["shield"] = false;
-    return acao;
+Acao pensar(const Estado& e) {
+    Acao a;
+    a.mover = FRENTE;
+    if (!e.inimigos.empty()) {
+        a.angulo_torre = angulo_para(e.eu.x, e.eu.y, e.inimigos[0].x, e.inimigos[0].y);
+        a.atirar = e.eu.frames_para_atirar == 0;
+    }
+    return a;
 }
 ```
 
-**Java**: o nome da classe é detectado automaticamente, compilado com o runner reflexivo e empacotado em um JAR com Gson 2.10.1.
+**Java**: o nome da classe é detectado automaticamente; o bot é compilado com o `Arena.java` e o runner reflexivo e empacotado em um JAR com Gson 2.10.1.
 ```java
-import com.google.gson.JsonObject;
-public class Solution {
-    public static JsonObject pensar(JsonObject estado) {
-        JsonObject acao = new JsonObject();
-        acao.addProperty("throttle", 1.0);
-        acao.addProperty("turn", 0.0);
-        acao.addProperty("turret_angle", 0.0);
-        acao.addProperty("shoot", true);
-        acao.addProperty("shield", false);
-        return acao;
+public class MeuBot extends Arena {
+    public static Acao pensar(Estado e) {
+        Acao a = new Acao();
+        a.mover = FRENTE;
+        if (e.inimigos.length > 0) {
+            a.angulo_torre = angulo_para(e.eu.x, e.eu.y, e.inimigos[0].x, e.inimigos[0].y);
+            a.atirar = e.eu.frames_para_atirar == 0;
+        }
+        return a;
     }
 }
 ```
+
+Nos exemplos, `angulo_para` é o ajudante do kit (fica no fim do arquivo da equipe, não no apoio).
 
 ---
 

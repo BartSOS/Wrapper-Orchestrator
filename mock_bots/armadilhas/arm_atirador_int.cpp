@@ -1,7 +1,9 @@
-// Armadilha: campos da ação com o tipo "errado" (shoot e shield como inteiro, turn como bool).
-// Antes, "shoot": 1 lançava type_error na engine e a ação inteira do tick era descartada:
-// este bot nunca atirava. Agora 1 vale como verdadeiro e o campo com tipo errado (turn)
-// perde só ele. O teste de robustez confere que este bot abate alguém.
+// Armadilha: bot antigo, de propósito. Usa a API anterior (json pensar(const json&), com
+// as chaves da engine em inglês) e campos com o tipo "errado" (shoot e shield como inteiro,
+// turn como bool). O wrapper ainda aceita esse formato: escreve um [AVISO] por chave antiga
+// no stderr, trata 1 como verdadeiro e true como 1. Antes, "shoot": 1 lançava type_error na
+// engine e a ação inteira do frame era descartada: este bot nunca atirava. O teste de
+// robustez confere que ele abate alguém. Não migre este arquivo para a API em português.
 #include <cmath>
 
 json pensar(const json& estado) {

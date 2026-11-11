@@ -1,33 +1,41 @@
-# Bot de teste do modo cenário (frente engine): visita os pontos de estado["objetivo"]
-# na ordem e depois mira e atira no inimigo mais próximo. Sem "objetivo" (torneio), só atira.
+# Bot de teste do modo cenário (frente engine): visita os pontos da fase (estado.pontos)
+# na ordem e depois mira e atira no inimigo mais próximo. Sem pontos (torneio), só atira.
+from arena import *
 import math
 
-_visitados = set()
-
-
-def _diferenca(a, b):
-    return (a - b + 180.0) % 360.0 - 180.0
+visitados = set()
 
 
 def pensar(estado):
-    eu = estado["self"]
-    acao = {"throttle": 0.0, "turn": 0.0, "turret_angle": eu["turret_angle"], "shoot": False, "shield": False}
+    meu = estado.eu
+    acao = Acao()
 
-    for p in estado.get("objetivo", {}).get("pontos", []):
-        if p["id"] in _visitados:
+    for p in estado.pontos:
+        if p.id in visitados:
             continue
-        if math.hypot(p["x"] - eu["x"], p["y"] - eu["y"]) <= p["raio"] * 0.6:
-            _visitados.add(p["id"])
+        if distancia(meu.x, meu.y, p.x, p.y) <= p.raio * 0.6:
+            visitados.add(p.id)
             continue
-        alvo = math.degrees(math.atan2(p["y"] - eu["y"], p["x"] - eu["x"])) % 360.0
-        erro = _diferenca(alvo, eu["angle"])
-        acao["turn"] = max(-1.0, min(1.0, erro / 9.0))
-        acao["throttle"] = 1.0 if abs(erro) < 30 else 0.2
+        para_o_ponto = angulo_para(meu.x, meu.y, p.x, p.y)
+        acao.direcao = para_o_ponto
+        acao.mover = FRENTE if abs(diferenca_angulo(meu.angulo_chassi, para_o_ponto)) < 30 else 0.2
         return acao
 
-    inimigos = estado.get("enemies", [])
-    if inimigos:
-        e = min(inimigos, key=lambda i: math.hypot(i["x"] - eu["x"], i["y"] - eu["y"]))
-        acao["turret_angle"] = math.degrees(math.atan2(e["y"] - eu["y"], e["x"] - eu["x"])) % 360.0
-        acao["shoot"] = True
+    if estado.inimigos:
+        alvo = min(estado.inimigos, key=lambda i: distancia(meu.x, meu.y, i.x, i.y))
+        acao.angulo_torre = angulo_para(meu.x, meu.y, alvo.x, alvo.y)
+        acao.atirar = True
     return acao
+
+
+def distancia(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
+
+
+def angulo_para(x1, y1, x2, y2):
+    return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 360
+
+
+def diferenca_angulo(de, para):
+    d = (para - de) % 360
+    return d - 360 if d > 180 else d

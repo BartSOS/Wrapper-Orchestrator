@@ -6,11 +6,11 @@
   "conceito": "chassi e torre independentes",
   "texto": "Chegue ao ponto B e destrua os 5 alvos no caminho, no mesmo prazo. Não dá tempo de parar para atirar.",
   "dicas": [
-    "throttle e turn movem o chassi; turret_angle e shoot cuidam da torre, no mesmo frame.",
+    "mover e direcao cuidam do chassi; angulo_torre e atirar cuidam da torre, no mesmo frame.",
     "Os alvos não se mexem: mire da sua posição atual.",
-    "A energia é justa: um tiro errado custa uns 4 segundos de espera."
+    "A energia é justa: ela volta 0,5 por frame, então um tiro errado custa 40 frames de espera."
   ],
-  "ajudantes": ["eu", "inimigos", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "ajudantes": ["distancia", "angulo_para"],
   "cenario": {
     "max_ticks": 230,
     "jogador": {"x": 100, "y": [400, 600], "angulo": 0, "hp": 100, "energia": 100},

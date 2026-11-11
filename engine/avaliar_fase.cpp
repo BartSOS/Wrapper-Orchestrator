@@ -5,7 +5,10 @@
 // Saída (stdout): um JSON com o veredito da tentativa:
 //   {"fase", "passou", "baloes", "motivo", "metricas": {ticks, tiros, vida, dano_recebido},
 //    "objetivos": [{"tipo", "ok", "detalhe"}], "proximo_balao", "tick_final", "seed",
-//    "pontos_consumidos": {"<id do ponto>": tick}}
+//    "pontos_consumidos": {"<id do ponto>": tick}, "titulo", "limite_frame",
+//    "progresso": [{frame, ponto, distancia, dentro, seguidos, precisa, velocidade, concluido}]}
+// titulo, limite_frame e progresso vão para o bloco "fase" do replay (script.sh), para o HUD do
+// visualizador: um item por frame, com as mesmas regras dos objetivos (ver progresso()).
 // pontos_consumidos: tick em que cada ponto passou a contar (chegar: a entrada no raio; ficar_no_raio:
 // o último dos ticks seguidos; visitar_em_ordem: a entrada na vez dele). Ponto que não contou fica de
 // fora. O script.sh copia esse tick para fase.pontos[].consumido_tick do replay (o visualizador o esconde).
@@ -173,6 +176,9 @@ public:
             saida["tick_final"] = tickFinal();
             if (seed_) saida["seed"] = *seed_;
             saida["pontos_consumidos"] = json::object();
+            saida["titulo"] = fase_.value("titulo", id_);
+            saida["limite_frame"] = limiteFrame();
+            saida["progresso"] = json::array();
             return saida;
         }
 
@@ -235,6 +241,9 @@ public:
         if (seed_) saida["seed"] = *seed_;
         saida["pontos_consumidos"] = json::object();
         for (const auto& [pid, t] : consumidos_) saida["pontos_consumidos"][pid] = t;
+        saida["titulo"] = fase_.value("titulo", id_);
+        saida["limite_frame"] = limiteFrame();
+        saida["progresso"] = progresso(passou ? tickConclusao : -1);
         return saida;
     }
 
@@ -629,6 +638,86 @@ private:
         else if (t.dMaisPerto > 3 * p.raio && t.andou > 3 * t.dMaisPerto)
             s += " Andou " + inteiro(t.andou) + " unidades sem alcançar o ponto." + DICA_RUMO;
         return s;
+    }
+
+    // ---------------------------------------------------------------- progresso (HUD)
+    // Maior ate_tick entre os objetivos (-1 = nenhum tem prazo)
+    int limiteFrame() const {
+        int lim = -1;
+        for (const auto& o : fase_["objetivos"])
+            if (o.contains("ate_tick") && o["ate_tick"].is_number()) lim = std::max(lim, o["ate_tick"].get<int>());
+        return lim;
+    }
+
+    static double arred1(double v) { return std::round(v * 10.0) / 10.0; }
+
+    // Um item por frame do replay, para o HUD do visualizador (VISUALIZADOR_WEB.md, "Progresso por
+    // frame"). Usa as mesmas regras dos objetivos: distância do CENTRO do tanque ao ponto <= raio,
+    // "seguidos" zera ao sair, e em visitar_em_ordem o ponto da vez só avança até o prazo.
+    // tickConclusao: frame em que a fase foi cumprida (-1 = não passou).
+    json progresso(int tickConclusao) const {
+        const json* trilha = nullptr;
+        for (const auto& o : fase_["objetivos"]) {
+            std::string tipo = o.value("tipo", "");
+            if (tipo == "chegar" || tipo == "ficar_no_raio" || tipo == "visitar_em_ordem") {
+                trilha = &o;
+                break;
+            }
+        }
+        std::vector<std::string> ordem;
+        int precisa = 0, lim = -1;
+        if (trilha) {
+            std::string tipo = (*trilha)["tipo"];
+            lim = limite(*trilha);
+            if (tipo == "visitar_em_ordem") {
+                for (const auto& p : (*trilha)["pontos"]) ordem.push_back(p.get<std::string>());
+            } else {
+                ordem.push_back((*trilha)["ponto"].get<std::string>());
+            }
+            if (tipo == "ficar_no_raio") precisa = std::max(1, (*trilha)["ticks_seguidos"].get<int>());
+        }
+
+        json lista = json::array();
+        size_t prox = 0;
+        int seguidos = 0;
+        bool temAnt = false;
+        double xa = 0, ya = 0;
+        for (const auto& q : quadros_) {
+            bool vivo = q.tem_jogador && q.vivo;
+            json item;
+            item["frame"] = q.tick;
+            double vel = (vivo && temAnt) ? dist(xa, ya, q.x, q.y) : 0.0;
+            if (vivo && !ordem.empty()) {
+                const Ponto& p = pontos_.at(ordem[std::min(prox, ordem.size() - 1)]);
+                double d = dist(q.x, q.y, p.x, p.y);
+                bool dentro = d <= p.raio;
+                seguidos = dentro ? seguidos + 1 : 0;
+                item["ponto"] = p.id;
+                item["distancia"] = arred1(d);
+                item["dentro"] = dentro;
+                // Visitar em ordem: ao entrar no ponto da vez (dentro do prazo), o próximo passa a valer
+                if (ordem.size() > 1 && dentro && q.tick <= lim && prox < ordem.size()) {
+                    prox++;
+                    seguidos = 0;
+                }
+            } else {
+                if (!vivo) seguidos = 0;
+                item["ponto"] = "";
+                item["distancia"] = -1;
+                item["dentro"] = false;
+            }
+            item["seguidos"] = seguidos;
+            item["precisa"] = precisa;
+            item["velocidade"] = arred1(vel);
+            item["concluido"] = tickConclusao >= 0 && q.tick >= tickConclusao;
+            lista.push_back(item);
+            if (vivo) {
+                xa = q.x;
+                ya = q.y;
+                temAnt = true;
+            }
+        }
+        return lista;
     }
 
     // ---------------------------------------------------------------- objetivos

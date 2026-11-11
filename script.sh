@@ -1207,8 +1207,8 @@ veredito = "PASSOU" if r.get("passou") else "NAO PASSOU"
 print(f"  Fase {r.get('fase')}: {veredito} | balões {r.get('baloes')} | {r.get('motivo', '')}")
 EOF
     # fase.pontos[].consumido_tick no replay: tick em que o ponto passou a contar (-1 = nunca; sem null,
-    # que o JsonUtility da Unity não lê num int),
-    # para o visualizador esconder o ponto a partir dali
+    # que o JsonUtility da Unity não lê num int), para o visualizador esconder o ponto a partir dali;
+    # e fase.titulo, fase.limite_frame e fase.progresso[] para o HUD (VISUALIZADOR_WEB.md)
     python3 - "${saida}" "${DIR_ROOT}/match_frames.json" << 'EOF' || true
 import json, os, sys
 try:
@@ -1216,10 +1216,23 @@ try:
     with open(sys.argv[2], encoding="utf-8") as f:
         replay = json.load(f)
     consumidos = r.get("pontos_consumidos") or {}
-    pontos = (replay.get("fase") or {}).get("pontos") or []
+    fase = replay.get("fase")
+    pontos = (fase or {}).get("pontos") or []
     for p in pontos:
         p["consumido_tick"] = consumidos.get(p.get("id"), -1)
-    if pontos:
+    # HUD do visualizador: título, prazo e progresso por frame, calculados pelo avaliador
+    if isinstance(fase, dict):
+        fase["titulo"] = r.get("titulo") or fase.get("id", "")
+        fase["limite_frame"] = r.get("limite_frame", -1)
+        fase["progresso"] = r.get("progresso") or []
+    # O progresso só serve ao replay: sai do resultado_fase.json, que o BOCA guarda por tentativa
+    if "progresso" in r:
+        del r["progresso"]
+        tmp = sys.argv[1] + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(r, f, ensure_ascii=False)
+        os.replace(tmp, sys.argv[1])
+    if isinstance(fase, dict):
         tmp = sys.argv[2] + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(replay, f, ensure_ascii=False, indent=2)

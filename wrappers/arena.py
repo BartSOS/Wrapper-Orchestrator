@@ -256,7 +256,7 @@ def _numero(valor, nome):
         return 1.0 if valor else 0.0
     if isinstance(valor, (int, float)) and math.isfinite(valor):
         return float(valor)
-    _avisar("tipo_" + nome, f"'{nome}' recebeu {valor!r}, que nao e um numero: ignorado neste e nos proximos frames.")
+    _avisar("tipo_" + nome, f"'{nome}' recebeu {valor!r}, que nao e um numero: o campo foi ignorado (este aviso aparece so uma vez).")
     return None
 
 

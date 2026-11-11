@@ -1,21 +1,28 @@
 /* =============================================================================
- * GAME JAM PET 2026 - Interface oficial para bots em C (C99)
+ * GAME JAM PET 2026 - Arquivo de apoio para bots em C (C99)
  * =============================================================================
- * Este cabeçalho acompanha o kit (use #include "arena.h" no seu bot.c) e
- * também é injetado automaticamente na compilação oficial.
- * O competidor implementa APENAS:
+ * Este arquivo vem no kit e no zip das fases (deixe-o na mesma pasta do seu
+ * bot.c) e já existe no servidor: você NÃO envia o arena.h, só o seu bot.c.
+ *
+ * O que você escreve é só a função:
  *
  *     Acao pensar(const Estado *e);
  *
- * Não escreva main(), não leia stdin e não escreva em stdout:
- * a organização converte o estado da arena para as structs abaixo e envia
- * a Acao devolvida para a engine. printf() vai para o log de erros (stderr).
+ * Ela é chamada 10 vezes por segundo (uma vez por frame). Ela recebe o que o
+ * seu tanque enxerga (Estado) e devolve o que ele deve fazer (Acao).
+ * Não escreva main(), não leia o teclado (scanf) e não use printf para
+ * responder: a arena cuida disso. Para depurar, use
+ *     fprintf(stderr, "frame %d: x=%.1f\n", e->frame, meu.x);
  *
- * Unidades: posições/raios em unidades da arena (1000 x 1000), velocidades em
- * unidades/s, ângulos em graus [0, 360), tempos em segundos.
+ * Unidades:
+ *   tempo ........ frames (1 frame = 0,1 segundo; 10 frames por segundo)
+ *   posição ...... unidades da arena (o mapa tem 1000 x 1000)
+ *   velocidade ... unidades por frame
+ *   ângulos ...... graus, de 0 a 360; 0 aponta para +x e o ângulo cresce de
+ *                  +x para +y (90 aponta para +y)
  * ============================================================================= */
-#ifndef TOPCOM_ARENA_H
-#define TOPCOM_ARENA_H
+#ifndef GAMEJAM_ARENA_H
+#define GAMEJAM_ARENA_H
 
 #include <math.h>
 #include <stdbool.h>
@@ -24,91 +31,97 @@
 #include <string.h>
 
 #ifdef __cplusplus
-extern "C" {   /* permite que o wrapper interno (C++) chame pensar() */
+extern "C" {   /* permite que a parte interna da arena (C++) chame pensar() */
 #endif
 
-#define MAX_INIMIGOS 32   /* adversários vivos (a arena comporta até 20 bots) */
-#define MAX_HAZARDS  64   /* perigos ativos; excedentes são descartados       */
-#define MAX_ITENS    64   /* itens no mapa;  excedentes são descartados       */
-#define MAX_PONTOS   16   /* pontos do objetivo (só nas fases de treino)      */
-#define TAM_ID_PONTO 16   /* id do ponto ("B", "P1"...), com o '\0' final      */
+#define MAX_INIMIGOS 32   /* inimigos vivos (a arena comporta até 20 tanques)  */
+#define MAX_PERIGOS  64   /* perigos ativos; os excedentes são descartados     */
+#define MAX_ITENS    64   /* itens no mapa; os excedentes são descartados      */
+#define MAX_PONTOS   16   /* pontos do objetivo (só nas fases de treino)       */
+#define TAM_ID_PONTO 16   /* id do ponto ("B", "P1"...), com o '\0' final       */
 
-/* Seu próprio tanque */
+/* Valores para Acao.mover */
+#define FRENTE  1.0       /* anda para a frente: 5 unidades por frame          */
+#define PARADO  0.0       /* fica parado (para no mesmo frame, sem inércia)    */
+#define RE     (-1.0)     /* anda de ré: 5 unidades por frame para trás        */
+
+/* Seu tanque (no Estado ele se chama eu) */
 typedef struct {
     int    id;
-    double x, y;          /* posição                                   */
-    double vx, vy;        /* velocidade                                */
-    double angle;         /* direção do chassi                         */
-    double turret_angle;  /* direção da torre                          */
-    double hp;            /* vida (0 a 100)                            */
-    double energy;        /* energia (0 a 100)                         */
-    double cooldown;      /* segundos até poder atirar de novo         */
-    bool   shield;        /* escudo ativo neste momento                */
+    double x, y;              /* posição do centro                           */
+    double vel_x, vel_y;      /* velocidade, em unidades por frame           */
+    double angulo_chassi;     /* para onde o chassi aponta (graus, 0 a 360)  */
+    double angulo_torre;      /* para onde a torre aponta (graus, 0 a 360)   */
+    double vida;              /* 0 a 100; em 0 o tanque é destruído          */
+    double energia;           /* 0 a 100; atirar e o escudo gastam energia   */
+    int    frames_para_atirar;/* frames até poder atirar de novo (0 = pode)  */
+    bool   escudo_ativo;      /* o escudo está ligado neste frame            */
 } Tanque;
 
-/* Adversário vivo */
+/* Inimigo vivo */
 typedef struct {
     int    id;
-    double x, y;
-    double vx, vy;
+    double x, y;              /* posição do centro                           */
+    double vel_x, vel_y;      /* velocidade, em unidades por frame           */
 } Inimigo;
 
-typedef enum { HAZARD_ARTILHARIA = 0, HAZARD_LASER = 1 } TipoHazard;
+typedef enum { PERIGO_ARTILHARIA = 0, PERIGO_LASER = 1 } TipoPerigo;
 
-/* Perigo da arena */
+/* Perigo da arena (artilharia ou laser) */
 typedef struct {
     int        id;
-    TipoHazard tipo;
-    double     x, y;
-    double     radius;    /* raio de efeito                             */
-    double     timer;     /* segundos até o impacto/ativação            */
-    double     angle;     /* direção atual do feixe (laser)             */
-    double     duration;  /* segundos restantes de efeito (laser)       */
-} Hazard;
+    TipoPerigo tipo;              /* PERIGO_ARTILHARIA ou PERIGO_LASER        */
+    double     x, y;              /* centro                                   */
+    double     raio;              /* alcance do efeito, em unidades           */
+    int        frames_ate_impacto;/* frames até cair/ligar (0 = já está ativo)*/
+    double     angulo;            /* direção do feixe do laser (graus)        */
+    int        frames_restantes;  /* frames que o laser ainda fica ligado     */
+} Perigo;
 
 typedef enum { ITEM_CURA = 0, ITEM_ENERGIA = 1 } TipoItem;
 
-/* Item coletável */
+/* Item que o tanque coleta passando por cima */
 typedef struct {
     int      id;
-    TipoItem tipo;
+    TipoItem tipo;            /* ITEM_CURA ou ITEM_ENERGIA                   */
     double   x, y;
 } Item;
 
 /* Ponto do objetivo de uma fase de treino ("chegue ao ponto B").
- * Marcador: não colide, não aparece em inimigos. */
+ * É só uma marca no chão: não bloqueia e não é inimigo. */
 typedef struct {
-    char   id[TAM_ID_PONTO];  /* nome do ponto, igual ao do texto da fase */
-    double x, y;
-    double raio;              /* conta como "chegou" dentro deste raio    */
+    char   id[TAM_ID_PONTO];  /* nome do ponto, igual ao do texto da fase    */
+    double x, y;              /* centro                                      */
+    double raio;              /* o tanque está no ponto se o centro dele     */
+                              /* estiver a até raio unidades deste centro    */
 } Ponto;
 
-/* Estado da arena recebido a cada tick */
+/* O que o seu tanque enxerga neste frame */
 typedef struct {
-    int     tick;
-    Tanque  self;
-    int     n_inimigos;
+    int     frame;                   /* número do frame (começa em 0)        */
+    Tanque  eu;                      /* o seu tanque                         */
+    int     n_inimigos;              /* quantos inimigos há em inimigos[]    */
     Inimigo inimigos[MAX_INIMIGOS];
-    int     n_hazards;
-    Hazard  hazards[MAX_HAZARDS];
-    int     n_itens;
+    int     n_perigos;               /* quantos perigos há em perigos[]      */
+    Perigo  perigos[MAX_PERIGOS];
+    int     n_itens;                 /* quantos itens há em itens[]          */
     Item    itens[MAX_ITENS];
-    /* Fases de treino: pontos do objetivo, na ordem do arquivo da fase.
-     * No torneio n_pontos é sempre 0. */
-    int     n_pontos;
-    Ponto   pontos[MAX_PONTOS];
+    int     n_pontos;                /* fases de treino: quantos pontos há   */
+    Ponto   pontos[MAX_PONTOS];      /* no torneio, n_pontos é sempre 0      */
 } Estado;
 
-/* Ação devolvida a cada tick */
+/* O que o seu tanque faz neste frame. Preencha os 5 campos. */
 typedef struct {
-    double throttle;      /* -1.0 (ré) a 1.0 (frente)                  */
-    double turn;          /* -1.0 a 1.0 (giro do chassi)               */
-    double turret_angle;  /* 0 a 360 graus (direção absoluta da torre)  */
-    bool   shoot;         /* disparar                                  */
-    bool   shield;        /* ligar o escudo                            */
+    double mover;         /* FRENTE, PARADO ou RE (0.5 = metade da velocidade) */
+    double direcao;       /* para onde o chassi deve apontar (graus). O tanque */
+                          /* gira até 9 graus por frame até chegar lá. Para    */
+                          /* manter a direção: a.direcao = meu.angulo_chassi   */
+    double angulo_torre;  /* para onde a torre aponta (graus); muda na hora    */
+    int    atirar;        /* 1 (ou true) atira; 0 (ou false) não atira         */
+    int    ligar_escudo;  /* 1 (ou true) liga o escudo neste frame; 0 desliga  */
 } Acao;
 
-/* Função que o competidor implementa */
+/* A função que você escreve */
 Acao pensar(const Estado *e);
 
 /* Em modo C99 estrito o math.h não define M_PI */
@@ -116,12 +129,8 @@ Acao pensar(const Estado *e);
 #define M_PI 3.14159265358979323846
 #endif
 
-/* As funções de matemática (distancia, angulo_para, diferenca_angulo e
- * normalizar_angulo) não ficam mais aqui: estão no próprio arquivo do kit
- * (bot.c), na seção AJUDANTES, para você ver, alterar ou apagar. */
-
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* TOPCOM_ARENA_H */
+#endif /* GAMEJAM_ARENA_H */

@@ -26,12 +26,19 @@
 # /var/cache/gamejam-validador). Se o diretório não for gravável, usa um temporário.
 #   C   -> c/c_wrapper.o: main + JSON -> structs de arena.h. Cada bot só compila
 #          o próprio .c (gcc -std=c99 -include arena.h) e é ligado a ele.
-#   C++ -> cpp/cpp_header.hpp.gch (cabeçalho pré-compilado com nlohmann/json) e
-#          cpp/cpp_footer.o (main + E/S JSON). Cada bot compila com
-#          -include cpp_header.hpp e é ligado ao cpp_footer.o.
-# O contrato do aluno não muda: C++ escreve json pensar(const json& estado) sem
-# main; C escreve Acao pensar(const Estado *e). #include "arena.h" (C) e
-# #include <nlohmann/json.hpp> (C++) funcionam como no kit do participante.
+#   C++ -> cpp/cpp_header.hpp.gch (cabeçalho pré-compilado com arena.hpp e nlohmann/json),
+#          cpp/cpp_footer.o (main + E/S JSON -> Estado de arena.hpp) e
+#          cpp/cpp_footer_json.o (o mesmo main para a API antiga, json pensar(const json&)).
+#          Cada bot compila com -include cpp_header.hpp e é ligado ao rodapé que servir.
+# Contrato da equipe (sem main, só a função pensar, nomes em português):
+#   C      Acao pensar(const Estado *e)        #include "arena.h"
+#   C++    Acao pensar(const Estado& e)        #include "arena.hpp"
+#   Java   public static Acao pensar(Estado e)  na classe "public class X extends Arena"
+#   Python def pensar(estado)                    from arena import *
+# Os arquivos de apoio (arena.h, arena.hpp, Arena.java, arena.py) ficam aqui em
+# wrappers/ e vão no kit; a equipe envia só o próprio arquivo. As APIs antigas em
+# JSON cru (C++, Java, Python) continuam aceitas; chaves antigas da ação geram um
+# "[AVISO] ..." no stderr do bot.
 # O script.sh chama --preparar antes de compilar os bots em paralelo.
 # ==============================================================================
 set -euo pipefail
@@ -116,8 +123,9 @@ preparar_cpp() {
     [[ -z "$CACHE_CPP" ]] || return 0
     local dir="${DIR_PREBUILT}/cpp"
     local ass
-    ass="$(assinatura "${DIR_WRAPPERS}/cpp_header.hpp" "${DIR_WRAPPERS}/cpp_footer.cpp" "${NLOHMANN_INC}/nlohmann/json.hpp")"
-    if [[ -f "${dir}/cpp_header.hpp.gch" && -f "${dir}/cpp_footer.o" && \
+    ass="$(assinatura "${DIR_WRAPPERS}/cpp_header.hpp" "${DIR_WRAPPERS}/arena.hpp" "${DIR_WRAPPERS}/cpp_footer.cpp" \
+        "${NLOHMANN_INC}/nlohmann/json.hpp")"
+    if [[ -f "${dir}/cpp_header.hpp.gch" && -f "${dir}/cpp_footer.o" && -f "${dir}/cpp_footer_json.o" && \
           "$(cat "${dir}/assinatura" 2>/dev/null)" == "$ass" ]]; then
         CACHE_CPP="$dir"
         return 0
@@ -127,10 +135,14 @@ preparar_cpp() {
     # O .gch só é usado quando está ao lado do cabeçalho passado em -include
     cp "${DIR_WRAPPERS}/cpp_header.hpp" "${dir}/cpp_header.hpp"
     compilar_para "${dir}/cpp_header.hpp.gch" \
-        g++ "${CXX_FLAGS[@]}" -w -I"${NLOHMANN_INC}" -x c++-header "${dir}/cpp_header.hpp"
+        g++ "${CXX_FLAGS[@]}" -w -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" -x c++-header "${dir}/cpp_header.hpp"
+    # Duas versões do main: Acao pensar(const Estado&) (atual) e json pensar(const json&) (antiga)
     compilar_para "${dir}/cpp_footer.o" \
-        g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -include "${dir}/cpp_header.hpp" -Winvalid-pch \
+        g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" -include "${dir}/cpp_header.hpp" -Winvalid-pch \
             -c "${DIR_WRAPPERS}/cpp_footer.cpp"
+    compilar_para "${dir}/cpp_footer_json.o" \
+        g++ "${CXX_FLAGS[@]}" -DGAMEJAM_PENSAR_JSON -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" \
+            -include "${dir}/cpp_header.hpp" -Winvalid-pch -c "${DIR_WRAPPERS}/cpp_footer.cpp"
     echo "$ass" > "${dir}/assinatura"
     CACHE_CPP="$dir"
 }
@@ -181,6 +193,12 @@ mensagem_amigavel() {
         echo "nao crie a funcao main(): a arena ja tem a dela. Apague a sua main()."
         return
     fi
+    local antigo
+    antigo="$(nome_antigo)"
+    if [[ -n "$antigo" ]]; then
+        echo "$antigo"
+        return
+    fi
     case "$lang" in
         c)
             if grep -q "conflicting types for 'pensar'" "${LOG_COMPILACAO}"; then
@@ -191,15 +209,46 @@ mensagem_amigavel() {
             ;;
         cpp)
             if grep -qE "undefined reference to .pensar\(|ambiguating new declaration of .*pensar|call of overloaded .pensar|conflicting declaration .*pensar" "${LOG_COMPILACAO}"; then
-                echo "a assinatura de pensar esta errada: use exatamente 'json pensar(const json& estado)'."
+                echo "a assinatura de pensar esta errada: use exatamente 'Acao pensar(const Estado& e)'."
             fi
             ;;
         java)
             if grep -q "JavaRunner.java:[0-9]*: error" "${LOG_COMPILACAO}"; then
-                echo "o metodo pensar esta errado ou fora da classe principal: use exatamente 'public static JsonObject pensar(JsonObject estado)', dentro da classe publica do arquivo."
+                echo "o metodo pensar esta errado ou fora da classe principal: use exatamente 'public static Acao pensar(Estado e)', dentro da classe publica do arquivo (que comeca com 'public class MeuBot extends Arena')."
             fi
             ;;
     esac
+}
+
+# Campo com o nome antigo (em inglês) -> diz o nome novo. Vazio se não for o caso.
+nome_antigo() {
+    local campo novo
+    campo="$(grep -oE "has no member named '[A-Za-z_]+'|symbol: +variable [A-Za-z_]+" "${LOG_COMPILACAO}" \
+        | head -n 1 | grep -oE "[A-Za-z_]+'?$" | tr -d "'")" || true
+    case "$campo" in
+        tick) novo="frame" ;;
+        self) novo="eu" ;;
+        enemies|n_enemies) novo="inimigos (e n_inimigos)" ;;
+        hazards|n_hazards) novo="perigos (e n_perigos)" ;;
+        items|n_items) novo="itens (e n_itens)" ;;
+        vx) novo="vel_x (em unidades por frame)" ;;
+        vy) novo="vel_y (em unidades por frame)" ;;
+        angle) novo="angulo_chassi" ;;
+        turret_angle) novo="angulo_torre" ;;
+        hp) novo="vida" ;;
+        energy) novo="energia" ;;
+        cooldown) novo="frames_para_atirar" ;;
+        radius) novo="raio" ;;
+        timer) novo="frames_ate_impacto" ;;
+        duration) novo="frames_restantes" ;;
+        type) novo="tipo" ;;
+        throttle) novo="mover (FRENTE, PARADO ou RE)" ;;
+        turn) novo="direcao (para onde o tanque deve apontar, em graus)" ;;
+        shoot) novo="atirar" ;;
+        shield) novo="ligar_escudo (na acao) ou escudo_ativo (no estado)" ;;
+        *) return 0 ;;
+    esac
+    echo "o campo '${campo}' agora se chama ${novo}. Os nomes estao no arquivo de apoio (arena.h, arena.hpp ou Arena.java)."
 }
 
 # Falha de compilação: mensagem clara (se houver) ou a saída do compilador sem os caminhos do servidor
@@ -234,14 +283,25 @@ case "$EXT" in
             -include "${CACHE_CPP}/cpp_header.hpp" -Winvalid-pch \
             -x c++ -c "${SOURCE_FILE}" -o "${OBJ_BOT}" || falhar_compilacao cpp
 
-        if ! compilar g++ "${OBJ_BOT}" "${CACHE_CPP}/cpp_footer.o" -o "${EXE_FILE}" -lm; then
-            # Compilou, mas não ligou ao main pré-compilado (ex.: pensar() declarada inline):
-            # repete como antes, com cabeçalho + código + rodapé numa única unidade.
+        # Liga ao main pré-compilado da API atual (Acao pensar(const Estado&)) ou, se o bot
+        # define a antiga (json pensar(const json&)), ao main da antiga. As tentativas que
+        # falham vão para um log à parte: só aparecem se nenhuma der certo.
+        LOG_LIGACAO="${LOG_COMPILACAO}.ligacao"
+        TEMPORARIOS+=("${LOG_LIGACAO}")
+        ligar() { LC_ALL=C "$@" >> "${LOG_LIGACAO}" 2>&1; }
+        if ! ligar g++ "${OBJ_BOT}" "${CACHE_CPP}/cpp_footer.o" -o "${EXE_FILE}" -lm && \
+           ! ligar g++ "${OBJ_BOT}" "${CACHE_CPP}/cpp_footer_json.o" -o "${EXE_FILE}" -lm; then
+            # Compilou, mas não ligou a nenhum main pré-compilado (ex.: pensar() declarada
+            # inline): repete com cabeçalho + código + rodapé numa única unidade.
             TMP_SRC="${EXE_FILE}_combined.cpp"
             TEMPORARIOS+=("${TMP_SRC}")
             cat "${DIR_WRAPPERS}/cpp_header.hpp" "${SOURCE_FILE}" "${DIR_WRAPPERS}/cpp_footer.cpp" > "${TMP_SRC}"
-            compilar g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" "${TMP_SRC}" -o "${EXE_FILE}" -lm \
-                || falhar_compilacao cpp
+            if ! ligar g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" "${TMP_SRC}" -o "${EXE_FILE}" -lm && \
+               ! ligar g++ "${CXX_FLAGS[@]}" -DGAMEJAM_PENSAR_JSON -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" \
+                     "${TMP_SRC}" -o "${EXE_FILE}" -lm; then
+                cat "${LOG_LIGACAO}" >> "${LOG_COMPILACAO}"
+                falhar_compilacao cpp
+            fi
         fi
         mostrar_avisos
         ;;
@@ -263,10 +323,12 @@ case "$EXT" in
         python3 -I "${DIR_WRAPPERS}/checar_python.py" "${SOURCE_FILE}" || exit 1
         WRAPPER_FILE="${DIR_WRAPPERS}/wrapper.py"
         # O código da equipe vai embutido (base64) e só roda depois que o wrapper protege
-        # a saída: um print no nível do arquivo não chega mais à engine.
+        # a saída: um print no nível do arquivo não chega mais à engine. O arquivo de apoio
+        # (arena.py, o "from arena import *" da equipe) vai embutido do mesmo jeito.
         {
             echo '#!/usr/bin/env python3'
             printf '_FONTE_DA_EQUIPE = "%s"\n' "$(base64 -w0 < "${SOURCE_FILE}")"
+            printf '_FONTE_ARENA = "%s"\n' "$(base64 -w0 < "${DIR_WRAPPERS}/arena.py")"
             cat "${WRAPPER_FILE}"
         } > "${EXE_FILE}"
         chmod +x "${EXE_FILE}"
@@ -281,13 +343,34 @@ case "$EXT" in
         BUILD_TMP="$(mktemp -d "${DIR_TMP}/java_build_XXXXXX")"
         TEMPORARIOS+=("${BUILD_TMP}")
 
+        # Arquivo de apoio (Estado, Acao, FRENTE...) compilado junto: a equipe não o envia
         cp "$SOURCE_FILE" "${BUILD_TMP}/${CLASS_NAME}.java"
+        cp "${DIR_WRAPPERS}/Arena.java" "${BUILD_TMP}/Arena.java"
         sed "s/CLASS_PLACEHOLDER/${CLASS_NAME}/g" "$WRAPPER_SRC" > "${BUILD_TMP}/JavaRunner.java"
-        compilar javac -encoding UTF-8 -cp "${GSON_JAR}" "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java" \
-            || falhar_compilacao java
+        javac_bot() {
+            compilar javac -encoding UTF-8 -cp "${GSON_JAR}" -d "${BUILD_TMP}" "${BUILD_TMP}/${CLASS_NAME}.java" \
+                "${BUILD_TMP}/Arena.java" "${BUILD_TMP}/JavaRunner.java"
+        }
+        # API atual (Acao pensar(Estado e)); se não compilar, tenta a antiga (JsonObject pensar(JsonObject))
+        if ! javac_bot; then
+            mv "${LOG_COMPILACAO}" "${LOG_COMPILACAO}.nova"
+            TEMPORARIOS+=("${LOG_COMPILACAO}.nova")
+            sed -i \
+                -e '/\/\/MARCA_API$/s/= false;/= true;/' \
+                -e '/\/\/MARCA_NOVA$/s/{ return .*; }/{ return null; }/' \
+                -e "/\\/\\/MARCA_ANTIGA\$/s/{ return null; }/{ return ${CLASS_NAME}.pensar(j); }/" \
+                "${BUILD_TMP}/JavaRunner.java"
+            if ! javac_bot; then
+                # Mostra o erro da API que o bot parece usar
+                if ! grep -qE "JsonObject[[:space:]]+pensar[[:space:]]*\(" "${SOURCE_FILE}"; then
+                    cp "${LOG_COMPILACAO}.nova" "${LOG_COMPILACAO}"
+                fi
+                falhar_compilacao java
+            fi
+        fi
 
         (cd "${BUILD_TMP}" && jar -xf "${GSON_JAR}")
-        rm -f "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java"
+        rm -f "${BUILD_TMP}/${CLASS_NAME}.java" "${BUILD_TMP}/JavaRunner.java" "${BUILD_TMP}/Arena.java"
         jar cfe "${EXE_FILE}" JavaRunner -C "${BUILD_TMP}" .
         chmod +x "${EXE_FILE}"
         mostrar_avisos

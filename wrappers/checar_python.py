@@ -11,8 +11,9 @@ no [Ver Erro] do BOCA.
 Regras:
 - erro de sintaxe (inclui 'return' fora de função e afins);
 - def pensar(estado) no nível do arquivo, com 1 parâmetro (chamável com 1 argumento);
-- imports só da biblioteca padrão (sys.stdlib_module_names): sem bibliotecas externas e sem
-  import relativo; os, subprocess e importlib são proibidos;
+- imports só da biblioteca padrão (sys.stdlib_module_names) e do arquivo de apoio "arena"
+  (from arena import *): sem bibliotecas externas e sem import relativo; os, subprocess e
+  importlib são proibidos;
 - sem eval(), exec(), __import__;
 - sem input() nem sys.stdin no nível do arquivo (a arena entrega o estado pelo argumento de pensar);
 - sem o bloco "if __name__ == '__main__':" (o arquivo roda como script, junto com o executor da
@@ -30,6 +31,8 @@ def falha(msg):
 
 
 def checar_import(topo, linha):
+    if topo == "arena":
+        return  # arquivo de apoio da arena (wrappers/arena.py), já existe no servidor
     if topo in PROIBIDOS:
         falha(f"o modulo '{topo}' nao e permitido (linha {linha}).")
     if topo not in sys.stdlib_module_names:

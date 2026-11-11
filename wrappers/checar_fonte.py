@@ -64,7 +64,7 @@ def checar_includes(texto):
         caminho = m.group(1).strip()
         if caminho.startswith("/") or ".." in caminho or "\\" in caminho:
             falha(f"o #include \"{caminho}\" (linha {linha_de(texto, m.start())}) nao e permitido: "
-                  "use apenas as bibliotecas padrao e os arquivos do kit (arena.h, nlohmann/json.hpp).")
+                  "use apenas as bibliotecas padrao e os arquivos do kit (arena.h, arena.hpp, nlohmann/json.hpp).")
 
 
 def checar_c_cpp(linguagem, texto):
@@ -73,7 +73,7 @@ def checar_c_cpp(linguagem, texto):
     if not re.search(r"\bpensar\s*\(", sem_str):
         if linguagem == "c":
             falha("a funcao 'Acao pensar(const Estado *e)' nao foi encontrada no seu bot.")
-        falha("a funcao 'json pensar(const json& estado)' nao foi encontrada no seu bot.")
+        falha("a funcao 'Acao pensar(const Estado& e)' nao foi encontrada no seu bot.")
     if re.search(r"\bsystem\s*\(", sem_str):
         falha("uso de funcoes de sistema (system) nao e permitido.")
     checar_includes(puro)
@@ -82,14 +82,18 @@ def checar_c_cpp(linguagem, texto):
 def checar_java(texto):
     sem_str = sem_comentarios(texto, apagar_strings=True)
     if not re.search(r"\bpensar\s*\(", sem_str):
-        falha("o metodo 'public static JsonObject pensar(JsonObject estado)' nao foi encontrado no seu bot.")
+        falha("o metodo 'public static Acao pensar(Estado e)' nao foi encontrado no seu bot.")
     if re.search(r"Runtime\s*\.\s*getRuntime|ProcessBuilder|System\s*\.\s*exit", sem_str):
         falha("chamada de execucao de sistema nao e permitida (Runtime.getRuntime, ProcessBuilder, System.exit).")
     m = re.search(r"^[ \t]*package\s+[\w.]+\s*;", sem_str, re.M)
     if m:
         falha(f"remova a linha 'package' (linha {linha_de(sem_str, m.start())}): o bot deve ser um unico "
               "arquivo, sem package.")
-    return classe_principal(sem_str)
+    classe = classe_principal(sem_str)
+    if classe in ("Arena", "JavaRunner"):
+        falha(f"a classe do seu bot nao pode se chamar {classe} (nome usado pela arena): "
+              "use, por exemplo, 'public class MeuBot extends Arena'.")
+    return classe
 
 
 def classe_principal(sem_str):

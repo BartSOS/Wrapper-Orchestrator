@@ -3,14 +3,14 @@
   "ordem": 3,
   "bloco": "movimento",
   "titulo": "Percorrer pontos em ordem",
-  "conceito": "guardar estado entre frames",
+  "conceito": "guardar informação de um frame para o outro",
   "texto": "Passe pelos pontos P1, P2, P3 e P4, nessa ordem. Ponto fora da vez não conta.",
   "dicas": [
     "O estado traz todos os pontos, mas não diz por quais você já passou.",
-    "Guarde o índice do próximo ponto numa variável fora da função pensar.",
+    "Guarde o número do próximo ponto numa variável fora da função pensar (em Java, static): ela continua valendo no frame seguinte.",
     "O ponto mais perto quase nunca é o próximo."
   ],
-  "ajudantes": ["eu", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "ajudantes": ["distancia", "angulo_para"],
   "cenario": {
     "max_ticks": 800,
     "jogador": {"x": [100, 200], "y": [150, 250], "angulo": [0, 360], "hp": 100, "energia": 100},

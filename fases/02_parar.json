@@ -2,15 +2,15 @@
   "id": "02_parar",
   "ordem": 2,
   "bloco": "movimento",
-  "titulo": "Parar dentro do raio",
-  "conceito": "desacelerar e parar no ponto",
-  "texto": "Pare dentro do ponto B (até 10 unidades do centro) e fique lá 20 frames seguidos.",
+  "titulo": "Ficar no ponto B",
+  "conceito": "parar no lugar certo e esperar",
+  "texto": "Fique no ponto B (até 10 unidades do centro, contando a borda) por 20 frames seguidos. O frame em que você entra já conta; se sair, a contagem volta a zero. Os 20 frames precisam terminar até o frame 360 (o frame 360 conta).",
   "dicas": [
-    "Andando sempre com throttle 1 o tanque passa do ponto e fica rodando em volta dele.",
-    "A velocidade muda na hora: throttle 0 para no mesmo frame.",
-    "Se faltar menos de 5 unidades, use throttle = distância / 5."
+    "Andando sempre com mover = FRENTE o tanque passa do ponto e fica rodando em volta dele.",
+    "Não há inércia: mover = PARADO para o tanque no mesmo frame.",
+    "Perto do ponto, ande só o que falta: se faltam menos de 5 unidades, use mover = distância / 5 (0.5 anda 2,5 unidades)."
   ],
-  "ajudantes": ["eu", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "ajudantes": ["distancia", "angulo_para"],
   "cenario": {
     "max_ticks": 400,
     "jogador": {"x": 150, "y": [400, 600], "angulo": [0, 360], "hp": 100, "energia": 100},

@@ -4,13 +4,13 @@
   "bloco": "sobrevivencia",
   "titulo": "Sobreviver à artilharia",
   "conceito": "ler os perigos antes do impacto",
-  "texto": "Sobreviva 40 segundos à artilharia que mira no seu tanque. Cada bombardeio aparece em estado[\"hazards\"] 3 segundos antes de explodir.",
+  "texto": "Sobreviva até o frame 399 à artilharia que mira no seu tanque. Cada bombardeio aparece na lista perigos do estado 30 frames antes de explodir (frames_ate_impacto diz quantos frames faltam).",
   "dicas": [
     "Quem estiver a até 100 unidades do centro da explosão perde 40 de vida.",
-    "Fuja para longe do centro do perigo; throttle -1 anda de ré.",
+    "Fuja para longe do centro do perigo; mover = RE anda de ré.",
     "Cuidado com as paredes e com o segundo bombardeio."
   ],
-  "ajudantes": ["eu", "perigos", "distancia", "angulo_para", "diferenca_angulo", "montar_acao"],
+  "ajudantes": ["distancia", "angulo_para", "diferenca_angulo"],
   "cenario": {
     "max_ticks": 400,
     "jogador": {"x": 500, "y": 500, "angulo": [0, 360], "hp": 100, "energia": 100},

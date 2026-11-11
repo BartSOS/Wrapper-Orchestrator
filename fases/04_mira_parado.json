@@ -3,14 +3,14 @@
   "ordem": 4,
   "bloco": "mira",
   "titulo": "Acertar alvos parados",
-  "conceito": "turret_angle absoluto, recarga e energia",
-  "texto": "Destrua os 3 alvos parados (um tiro em cada). Eles aparecem em estado[\"enemies\"].",
+  "conceito": "angulo_torre, recarga e energia",
+  "texto": "Destrua os 3 alvos parados (um tiro em cada). Eles aparecem na lista inimigos do estado.",
   "dicas": [
-    "turret_angle é a direção absoluta na arena, em graus, e a torre chega lá no mesmo frame.",
-    "O tiro só sai com cooldown 0 e energia de pelo menos 20 (cada tiro gasta 20).",
+    "angulo_torre é a direção absoluta na arena, em graus, e a torre chega lá no mesmo frame.",
+    "O tiro só sai com atirar = 1, frames_para_atirar igual a 0 e energia de pelo menos 20 (cada tiro gasta 20).",
     "Enquanto um tiro voa, mire em outro alvo."
   ],
-  "ajudantes": ["eu", "inimigos", "angulo_para", "distancia", "montar_acao"],
+  "ajudantes": ["angulo_para", "distancia"],
   "cenario": {
     "max_ticks": 300,
     "jogador": {"x": 500, "y": 500, "angulo": [0, 360], "hp": 100, "energia": 100},

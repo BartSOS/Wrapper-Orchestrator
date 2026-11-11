@@ -9,68 +9,28 @@
 
 #include "arena.h"
 
-/* -----------------------------------------------------------------------------
- * AJUDANTES (opcional: renomeie, altere ou apague)
- * -----------------------------------------------------------------------------
- * Em C o estado já chega tipado (arena.h), então não há acessores: use direto
- *
- *   e->tick                           número do tick atual
- *   e->self                           seu tanque (Tanque)
- *   e->inimigos[i], i < e->n_inimigos adversários vivos (Inimigo)
- *   e->hazards[i],  i < e->n_hazards  perigos da arena (Hazard)
- *   e->itens[i],    i < e->n_itens    itens no mapa (Item)
- *
- * e devolva uma Acao com os campos throttle, turn, turret_angle, shoot e
- * shield (veja o pensar() abaixo). As funções abaixo são só matemática básica
- * (ângulos em graus; 0 = +x, cresce de +x para +y). Elas não decidem nada por
- * você.
- * ----------------------------------------------------------------------------- */
+/* Estas funções estão no fim do arquivo (AJUDANTES) */
+double distancia(double x1, double y1, double x2, double y2);
+double angulo_para(double x1, double y1, double x2, double y2);
+double diferenca_angulo(double de, double para);
 
-/* Distância entre dois pontos */
-static inline double distancia(double x1, double y1, double x2, double y2) {
-    return hypot(x2 - x1, y2 - y1);
-}
-
-/* Leva qualquer ângulo para o intervalo [0, 360) */
-static inline double normalizar_angulo(double graus) {
-    double a = fmod(graus, 360.0);
-    return a < 0 ? a + 360.0 : a;
-}
-
-/* Ângulo, em graus, do ponto (x1, y1) olhando para o ponto (x2, y2) */
-static inline double angulo_para(double x1, double y1, double x2, double y2) {
-    return normalizar_angulo(atan2(y2 - y1, x2 - x1) * 180.0 / M_PI);
-}
-
-/* Menor giro, em graus, para ir do ângulo 'de' ao ângulo 'para': de -180 (exclusivo) a 180.
- * Positivo = girar no sentido em que o ângulo aumenta. */
-static inline double diferenca_angulo(double de, double para) {
-    double d = normalizar_angulo(para - de);
-    return d > 180.0 ? d - 360.0 : d;
-}
-
-/* -----------------------------------------------------------------------------
- * FIM DOS AJUDANTES
- * ----------------------------------------------------------------------------- */
-
-/* Gira o chassi na direção do alvo (-1, 0 ou 1), com folga de 5 graus */
-static double girar_para(double angulo_atual, double angulo_alvo) {
-    double dif = diferenca_angulo(angulo_atual, angulo_alvo);
-    return dif > 5 ? 1.0 : (dif < -5 ? -1.0 : 0.0);
-}
 
 Acao pensar(const Estado *e) {
-    const Tanque *eu = &e->self;
-    Acao a = {0};
-    a.turret_angle = eu->turret_angle;
-    a.throttle = 0.5;
-    double direcao = eu->angle + 20.0;   /* sem adversários: gira devagar */
+    Tanque meu = e->eu;
+
+    Acao acao;
+    acao.mover = 0.5;
+    acao.direcao = meu.angulo_chassi + 20;  /* sem adversários: gira devagar */
+    acao.angulo_torre = meu.angulo_torre;
+    acao.atirar = 0;
+    acao.ligar_escudo = 0;
 
     /* Adversário mais próximo */
     int alvo = -1;
     double menor = 1e9;
     for (int i = 0; i < e->n_inimigos; i++) {
-        double d = distancia(eu->x, eu->y, e->inimigos[i].x, e->inimigos[i].y);
+        Inimigo inimigo = e->inimigos[i];
+        double d = distancia(meu.x, meu.y, inimigo.x, inimigo.y);
         if (d < menor) {
             menor = d;
             alvo = i;
@@ -78,33 +38,79 @@ Acao pensar(const Estado *e) {
     }
 
     if (alvo >= 0) {
-        const Inimigo *in = &e->inimigos[alvo];
-        double para_o_alvo = angulo_para(eu->x, eu->y, in->x, in->y);
-        a.turret_angle = para_o_alvo;
-        a.shoot = menor < 450 && eu->cooldown <= 0 && eu->energy >= 20;
+        Inimigo inimigo = e->inimigos[alvo];
+        double para_o_alvo = angulo_para(meu.x, meu.y, inimigo.x, inimigo.y);
+        acao.angulo_torre = para_o_alvo;
+        if (menor < 450 && meu.frames_para_atirar == 0 && meu.energia >= 20) {
+            acao.atirar = 1;
+        }
         if (menor > 300) {
-            direcao = para_o_alvo;             /* aproxima */
-            a.throttle = 1.0;
+            acao.direcao = para_o_alvo;         /* aproxima */
+            acao.mover = FRENTE;
         } else if (menor < 180) {
-            direcao = para_o_alvo + 180.0;     /* recua */
-            a.throttle = 1.0;
+            acao.direcao = para_o_alvo + 180;   /* recua */
+            acao.mover = FRENTE;
         } else {
-            direcao = para_o_alvo;             /* mantém a distância de tiro */
-            a.throttle = 0.2;
+            acao.direcao = para_o_alvo;         /* mantém a distância de tiro */
+            acao.mover = 0.2;
         }
     }
 
     /* Dentro do raio de uma artilharia: sai dele (prioridade máxima) */
-    for (int i = 0; i < e->n_hazards; i++) {
-        const Hazard *h = &e->hazards[i];
-        if (h->tipo == HAZARD_ARTILHARIA && distancia(eu->x, eu->y, h->x, h->y) < h->radius + 40) {
-            direcao = angulo_para(h->x, h->y, eu->x, eu->y);
-            a.throttle = 1.0;
+    for (int i = 0; i < e->n_perigos; i++) {
+        Perigo perigo = e->perigos[i];
+        if (perigo.tipo == PERIGO_ARTILHARIA
+            && distancia(meu.x, meu.y, perigo.x, perigo.y) < perigo.raio + 40) {
+            acao.direcao = angulo_para(perigo.x, perigo.y, meu.x, meu.y);
+            acao.mover = FRENTE;
             break;
         }
     }
 
-    a.turn = girar_para(eu->angle, direcao);
-    a.shield = eu->hp < 35 && eu->energy > 60;
-    return a;
+    if (meu.vida < 35 && meu.energia > 60) {
+        acao.ligar_escudo = 1;
+    }
+    return acao;
 }
+
+
+/* -----------------------------------------------------------------------------
+ * AJUDANTES (opcional: use, mude ou apague)
+ * -----------------------------------------------------------------------------
+ * Matemática básica, com ângulos em graus (0 aponta para +x; 90, para +y).
+ * Elas só calculam: não decidem nada por você.
+ * ----------------------------------------------------------------------------- */
+
+/* Distância entre o ponto (x1, y1) e o ponto (x2, y2) */
+double distancia(double x1, double y1, double x2, double y2) {
+    double dx = x2 - x1;                    /* quanto falta em x */
+    double dy = y2 - y1;                    /* quanto falta em y */
+    return sqrt(dx * dx + dy * dy);         /* Pitágoras */
+}
+
+/* Ângulo, em graus (de 0 a 360), de quem está em (x1, y1) olhando para (x2, y2) */
+double angulo_para(double x1, double y1, double x2, double y2) {
+    double radianos = atan2(y2 - y1, x2 - x1);  /* atan2 devolve radianos, de -pi a pi */
+    double graus = radianos * 180.0 / M_PI;     /* em graus: de -180 a 180 */
+    if (graus < 0) {
+        graus = graus + 360.0;                  /* passa para 0 a 360 */
+    }
+    return graus;
+}
+
+/* Quanto girar para ir do ângulo "de" ao ângulo "para" pelo caminho mais
+ * curto: de -180 a 180 graus. Positivo = o ângulo aumenta; negativo = diminui. */
+double diferenca_angulo(double de, double para) {
+    double d = para - de;
+    while (d > 180.0) {
+        d = d - 360.0;                      /* mais de meia volta: vai pelo outro lado */
+    }
+    while (d <= -180.0) {
+        d = d + 360.0;
+    }
+    return d;
+}
+
+/* -----------------------------------------------------------------------------
+ * FIM DOS AJUDANTES
+ * ----------------------------------------------------------------------------- */

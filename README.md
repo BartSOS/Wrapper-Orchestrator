@@ -146,7 +146,7 @@ Apenas a função `pensar`, chamada a cada frame (= tick da engine, 0,1 s). O co
 
 O ponto de partida da equipe é o starter kit, no repositório `Starter-Kit-Game-Jam` (`c/`, `cpp/`, `java/`, `python/`, cada pasta com o bot e o arquivo de apoio, mais o `README.md` e o `verificar.py`). No fim de cada bot há uma seção `AJUDANTES (opcional: use, mude ou apague)` com `distancia`, `angulo_para` e `diferenca_angulo` (mesmos nomes nas 4 linguagens), descrita no `AJUDANTES.md` do kit (material interno, fora do zip). O zip é gerado pela skill `boca-desafio` (`desafio.py --starter`). Os arquivos de apoio, o `json.hpp` e o `gson.jar` do kit são cópias dos daqui: `bash empacotar.sh --conferir-kit` / `--sincronizar-kit`.
 
-**API antiga (compatibilidade):** `def pensar(estado)` que devolve dict com `throttle`/`turn`/`turret_angle`/`shoot`/`shield`, `json pensar(const json&)` em C++ e `public static JsonObject pensar(JsonObject)` em Java continuam aceitos, com um `[AVISO]` no log do bot quando a ação usa chaves antigas. Em C e nos structs do C++, os nomes antigos não compilam; o `build_bot.sh` traduz o erro do compilador (`o campo 'hp' agora se chama vida...`).
+Só existe a API em português: o `pensar` recebe o `Estado` e devolve uma `Acao`, nas 4 linguagens. Os nomes em inglês do protocolo não são aceitos no código da equipe.
 
 O validador do BOCA monta o bot com o mesmo `wrappers/build_bot.sh` da partida, então só dá YES ao código que compila exatamente como na partida. `main()` próprio (C/C++), `package` em Java, import relativo, bloco `if __name__ == "__main__":` ou biblioteca fora da padrão em Python dão Compilation Error. O texto exato de cada mensagem (`ERRO DE VALIDACAO: ...` / `ERRO DE COMPILACAO: ...`) está no `ERROS_VALIDADOR.md` do kit (contrato C-K3, fora do zip).
 
@@ -165,7 +165,7 @@ O que a equipe vê (nomes iguais nas 4 linguagens; em C, as listas vêm com `n_i
 
 As constantes são textos em Python (`"ARTILHARIA"`, `"LASER"`, `"CURA"`, `"ENERGIA"`) e números nas outras linguagens. O wrapper converte `vx`/`vy` (por segundo) e `cooldown`/`timer`/`duration` (segundos) para unidades por frame e frames. Listas maiores que `MAX_INIMIGOS`/`MAX_PERIGOS`/`MAX_ITENS`/`MAX_PONTOS` (C) são truncadas.
 
-O JSON do protocolo (engine → wrapper), que a API antiga ainda recebe:
+O JSON do protocolo (engine → wrapper), que o wrapper traduz para o `Estado`:
 
 ```json
 {

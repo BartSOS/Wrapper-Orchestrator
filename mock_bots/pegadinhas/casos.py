@@ -9,26 +9,19 @@ Cada caso: (linguagem, nome do caso, esperado, código)
              Compilation Error (as mensagens estão no ERROS_VALIDADOR.md do repositório Starter-Kit-Game-Jam)
 """
 
-# Os casos usam a API em português (Acao/Estado), a que a equipe escreve. Cada linguagem tem
-# também um caso "api_antiga" (chaves em inglês): ele continua passando, só com [AVISO] na partida.
+# Os casos usam a API em português (Acao/Estado), a que a equipe escreve.
 
 # ------------------------------------------------------------------------------ C
 _C_PENSAR = "Acao pensar(const Estado *e) {\n    Acao a = {0};\n    a.mover = FRENTE;\n    return a;\n}\n"
 
 # ------------------------------------------------------------------------------ C++
 _CPP_PENSAR = "Acao pensar(const Estado& e) {\n    Acao a;\n    a.mover = FRENTE;\n    return a;\n}\n"
-_CPP_ANTIGO = ('json pensar(const json& estado) {\n'
-               '    return {{"throttle", 1.0}, {"turn", 0.0}, {"shoot", false}, {"shield", false}};\n}\n')
 
 # ------------------------------------------------------------------------------ Java
 _JAVA_CORPO = ("        Acao a = new Acao();\n        a.mover = FRENTE;\n        a.atirar = false;\n"
                "        return a;\n")
 _JAVA_OK = ("public class Solution extends Arena {\n    public static Acao pensar(Estado e) {\n"
             + _JAVA_CORPO + "    }\n}\n")
-_JAVA_ANTIGO = ("import com.google.gson.JsonObject;\n\npublic class Solution {\n"
-                "    public static JsonObject pensar(JsonObject estado) {\n"
-                '        JsonObject a = new JsonObject();\n        a.addProperty("throttle", 1.0);\n'
-                '        a.addProperty("shoot", false);\n        return a;\n    }\n}\n')
 
 # ------------------------------------------------------------------------------ Python
 _PY_RETORNO = "    acao = Acao()\n    acao.mover = FRENTE\n    return acao\n"
@@ -52,7 +45,7 @@ CASOS = [
      "Acao pensar(const Estado *e) {\n    Acao a = {0};\n"
      "    if (distancia(0, 0, e->eu.x, e->eu.y) > 100) {\n        a.mover = FRENTE;\n    }\n"
      "    return a;\n}\n"),
-    ("c", "campo_antigo", "agora se chama mover",
+    ("c", "campo_inexistente", "ERRO DE COMPILACAO",
      "Acao pensar(const Estado *e) {\n    Acao a = {0};\n    a.throttle = 1.0;\n    return a;\n}\n"),
     # ---- C: devem passar
     ("c", "system_em_comentario", "YES", _C_PENSAR + '/* nao use system("ls") */\n'),
@@ -77,16 +70,12 @@ CASOS = [
     ("cpp", "include_pai", "#include", '#include "../../conf.php"\n' + _CPP_PENSAR),
     ("cpp", "erro_de_sintaxe", "ERRO DE COMPILACAO",
      "Acao pensar(const Estado& e) {\n    Acao a\n    return a;\n}\n"),
-    ("cpp", "campo_antigo", "agora se chama mover",
+    ("cpp", "campo_inexistente", "ERRO DE COMPILACAO",
      "Acao pensar(const Estado& e) {\n    Acao a;\n    a.throttle = 1.0;\n    return a;\n}\n"),
     # ---- C++: devem passar
     ("cpp", "include_arena_hpp", "YES", '#include "arena.hpp"\n\n' + _CPP_PENSAR),
     ("cpp", "pensar_inline", "YES", "inline " + _CPP_PENSAR),
     ("cpp", "main_em_comentario", "YES", _CPP_PENSAR + "// int main() { }\n"),
-    ("cpp", "api_antiga", "YES", _CPP_ANTIGO),
-    ("cpp", "api_antiga_include_nlohmann", "YES",
-     "#include <nlohmann/json.hpp>\nusing json = nlohmann::json;\n\n" + _CPP_ANTIGO),
-    ("cpp", "api_antiga_include_cpp_header", "YES", '#include "cpp_header.hpp"\n\n' + _CPP_ANTIGO),
 
     # ---- Java: devem dar Compilation Error
     ("java", "package", "package", "package meubot;\n\n" + _JAVA_OK),
@@ -110,7 +99,7 @@ CASOS = [
      "public class Solution extends Arena {\n    public static Acao pensar(Estado e) {\n"
      "        Acao a = new Acao()\n        return a;\n    }\n}\n"),
     ("java", "import_inexistente", "ERRO DE COMPILACAO", "import foo.Bar;\n\n" + _JAVA_OK),
-    ("java", "campo_antigo", "agora se chama mover",
+    ("java", "campo_inexistente", "ERRO DE COMPILACAO",
      "public class Solution extends Arena {\n    public static Acao pensar(Estado e) {\n"
      "        Acao a = new Acao();\n        a.throttle = 1.0;\n        return a;\n    }\n}\n"),
     # ---- Java: devem passar
@@ -122,7 +111,6 @@ CASOS = [
      _JAVA_OK.replace("public class Solution extends Arena {\n",
                       "public class Solution extends Arena {\n    public static void main(String[] args) { }\n")),
     ("java", "nome_de_classe_diferente", "YES", _JAVA_OK.replace("Solution", "MeuBot")),
-    ("java", "api_antiga", "YES", _JAVA_ANTIGO),
 
     # ---- Python: devem dar Compilation Error
     ("py", "numpy", "biblioteca externa 'numpy'", "import numpy as np\n\n" + _PY_OK),
@@ -158,8 +146,6 @@ CASOS = [
     ("py", "bom_com_classe", "YES",
      "from arena import *\n\nclass Memoria:\n    contador = 0\n\nmem = Memoria()\n\n"
      "def pensar(estado):\n    mem.contador += 1\n" + _PY_RETORNO),
-    ("py", "api_antiga", "YES",
-     "def pensar(estado):\n    return {'throttle': 1.0, 'turn': 0.0, 'shoot': False, 'shield': False}\n"),
 ]
 
 EXTENSAO = {"c": "c", "cpp": "cpp", "java": "java", "py": "py"}

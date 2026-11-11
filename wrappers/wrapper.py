@@ -8,12 +8,11 @@
 # A saída é protegida ANTES de o código da equipe rodar: um print no nível do
 # arquivo (ou em sys.__stdout__) vai para o stderr e nunca chega à engine.
 # O arena.py vira o módulo "arena" (o "from arena import *" da equipe). Cada
-# estado chega ao pensar() como arena.Estado (nomes em português, e também o
-# dict original), e a Acao devolvida é traduzida para o protocolo da engine
-# (mover -> throttle, direcao -> turn, ...). Chaves antigas (throttle, turn...)
-# continuam aceitas, com um [AVISO] no stderr.
+# estado chega ao pensar() como arena.Estado (nomes em português), e a Acao
+# devolvida é traduzida para o protocolo da engine (mover -> throttle,
+# direcao -> turn, ...).
 # Toda linha de estado recebe exatamente uma resposta: se o pensar() falhar ou
-# devolver algo que não é uma Acao (nem um dict), a resposta é a ação vazia {}.
+# devolver algo que não é uma Acao, a resposta é a ação vazia {}.
 # =============================================================================
 
 import base64

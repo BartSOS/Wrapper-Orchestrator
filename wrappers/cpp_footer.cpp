@@ -1,19 +1,14 @@
 // =============================================================================
 // INFRAESTRUTURA DE I/O PARA BOTS EM C++ (WRAPPER OFICIAL DO BOCA)
-// Pré-compilado pelo build_bot.sh com o cabeçalho cpp_header.hpp, em duas versões:
-//   cpp_footer.o       chama  Acao pensar(const Estado& e)      (arena.hpp)
-//   cpp_footer_json.o  chama  json pensar(const json& estado)   (-DGAMEJAM_PENSAR_JSON,
-//                                                               bots antigos)
-// O bot é ligado à versão que corresponde ao pensar() que ele define.
+// Pré-compilado pelo build_bot.sh com o cabeçalho cpp_header.hpp (cpp_footer.o);
+// chama Acao pensar(const Estado& e), de arena.hpp.
 // Converte o estado da engine para os nomes em português (tempos em frames,
 // velocidades por frame) e a ação de volta para o protocolo da engine:
 //   mover -> throttle, direcao -> turn, angulo_torre -> turret_angle,
 //   atirar -> shoot, ligar_escudo -> shield.
-// A mesma tradução existe em c_wrapper.cpp, arena.py e Arena.java. Chaves antigas
-// (throttle, turn...) num json devolvido continuam aceitas, com um [AVISO] no stderr.
+// A mesma tradução existe em c_wrapper.cpp, arena.py e Arena.java.
 // =============================================================================
 #include <cstdio>
-#include <set>
 #include <unistd.h>
 
 namespace {
@@ -152,68 +147,6 @@ json comando_de(const Acao& a, double angulo_chassi) {
     return saida;
 }
 
-#ifdef GAMEJAM_PENSAR_JSON
-std::set<std::string> avisados;
-
-void avisar(const std::string& chave, const std::string& msg) {
-    if (!avisados.insert(chave).second) return;
-    std::cerr << "[AVISO] " << msg << std::endl;
-}
-
-// json devolvido pelo pensar() antigo: chaves novas ou antigas (com aviso) -> comando da engine
-json comando_de_json(const json& acao, const json& estado) {
-    if (!acao.is_object()) {
-        throw std::runtime_error("pensar() devolveu um json que nao e um objeto");
-    }
-    static const std::map<std::string, std::string> antigas = {
-        {"throttle", "mover"}, {"turn", "direcao"}, {"turret_angle", "angulo_torre"},
-        {"shoot", "atirar"}, {"shield", "ligar_escudo"}};
-    static const std::set<std::string> novas = {"mover", "direcao", "angulo_torre", "atirar", "ligar_escudo"};
-    for (auto it = acao.begin(); it != acao.end(); ++it) {
-        const std::string& k = it.key();
-        auto ant = antigas.find(k);
-        if (ant != antigas.end()) {
-            if (k == "turn") {
-                avisar(k, "use 'direcao' (para onde o tanque deve apontar, em graus) em vez de 'turn'. "
-                          "A chave antiga ainda funciona.");
-            } else {
-                avisar(k, "use '" + ant->second + "' em vez de '" + k + "' na acao. A chave antiga ainda funciona.");
-            }
-        } else if (!novas.count(k)) {
-            avisar("?" + k, "a acao tem a chave '" + k + "', que nao existe e foi ignorada. "
-                            "Use: mover, direcao, angulo_torre, atirar, ligar_escudo.");
-        }
-    }
-    auto numero = [&](const char* nova, const char* antiga, bool& tem) -> double {
-        for (const char* k : {nova, antiga}) {
-            auto it = acao.find(k);
-            if (it == acao.end() || it->is_null()) continue;
-            if (it->is_boolean()) { tem = true; return it->get<bool>() ? 1.0 : 0.0; }
-            if (it->is_number()) { tem = true; return it->get<double>(); }
-            avisar(std::string("tipo_") + k, std::string("'") + k + "' nao e um numero: ignorado.");
-        }
-        tem = false;
-        return 0.0;
-    };
-    bool tem = false;
-    json saida;
-    double mover = numero("mover", "throttle", tem);
-    saida["throttle"] = std::clamp(std::isfinite(mover) ? mover : 0.0, -1.0, 1.0);
-    double direcao = numero("direcao", "", tem);
-    if (tem && std::isfinite(direcao)) {
-        saida["turn"] = turn_para(direcao, num(filho(estado, "self"), "angle"));
-    } else {
-        double turn = numero("", "turn", tem);
-        saida["turn"] = std::clamp(std::isfinite(turn) ? turn : 0.0, -1.0, 1.0);
-    }
-    double torre = numero("angulo_torre", "turret_angle", tem);
-    if (tem && std::isfinite(torre)) saida["turret_angle"] = torre;
-    saida["shoot"] = numero("atirar", "shoot", tem) != 0.0;
-    saida["shield"] = numero("ligar_escudo", "shield", tem) != 0.0;
-    return saida;
-}
-#endif
-
 }  // namespace
 
 int main() {
@@ -233,13 +166,9 @@ int main() {
         std::string resposta = "{}";
         try {
             json estado_arena = json::parse(linha);
-#ifdef GAMEJAM_PENSAR_JSON
-            resposta = comando_de_json(pensar(estado_arena), estado_arena).dump();
-#else
             Estado e = estado_de(estado_arena);
             Acao a = pensar(e);
             resposta = comando_de(a, e.eu.angulo_chassi).dump();
-#endif
         } catch (const std::exception& ex) {
             std::cerr << "[ERRO NO BOT C++]: " << ex.what() << " (neste frame o tanque ficou parado)" << std::endl;
         } catch (...) {

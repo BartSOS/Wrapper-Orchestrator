@@ -1,5 +1,4 @@
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
 import java.io.PrintStream;
@@ -13,16 +12,12 @@ import com.google.gson.JsonPrimitive;
 // INFRAESTRUTURA DE I/O PARA BOTS EM JAVA (WRAPPER OFICIAL DO BOCA)
 // O build_bot.sh troca CLASS_PLACEHOLDER pela classe da equipe e compila este
 // arquivo junto com o Arena.java (arquivo de apoio: Estado, Acao, FRENTE...).
-// O bot define um dos dois:
-//   public static Acao pensar(Estado e)               (o atual, com Arena.java)
-//   public static JsonObject pensar(JsonObject estado) (o antigo, JSON cru em inglês)
+// O bot define: public static Acao pensar(Estado e)
 // Converte o estado da engine para os nomes em português (tempos em frames,
 // velocidades por frame) e a ação de volta para o protocolo da engine:
 //   mover -> throttle, direcao -> turn, angulo_torre -> turret_angle,
 //   atirar -> shoot, ligar_escudo -> shield.
 // A mesma tradução existe em c_wrapper.cpp, cpp_footer.cpp e arena.py.
-// Chaves antigas (throttle, turn...) num JsonObject devolvido continuam aceitas,
-// com um [AVISO] no stderr.
 // =============================================================================
 public class JavaRunner {
     private static final Gson gson = new Gson();
@@ -174,70 +169,6 @@ public class JavaRunner {
         return saida;
     }
 
-    private static final String[][] ANTIGAS = {
-        {"throttle", "mover"}, {"turn", "direcao"}, {"turret_angle", "angulo_torre"},
-        {"shoot", "atirar"}, {"shield", "ligar_escudo"}};
-    private static final Set<String> NOVAS = new HashSet<>(java.util.Arrays.asList(
-        "mover", "direcao", "angulo_torre", "atirar", "ligar_escudo"));
-
-    // Lê a chave nova ou, se ela faltar, a antiga. NaN = ausente.
-    private static double ler(JsonObject acao, String nova, String antiga) {
-        for (String k : new String[] {nova, antiga}) {
-            if (k == null) continue;
-            JsonElement el = acao.get(k);
-            if (el == null || el.isJsonNull()) continue;
-            if (el.isJsonPrimitive()) {
-                JsonPrimitive p = el.getAsJsonPrimitive();
-                if (p.isBoolean()) return p.getAsBoolean() ? 1.0 : 0.0;
-                if (p.isNumber()) return p.getAsDouble();
-            }
-            avisar("tipo_" + k, "'" + k + "' nao e um numero: ignorado.");
-        }
-        return Double.NaN;
-    }
-
-    // JsonObject devolvido pelo pensar() antigo: chaves novas ou antigas (com aviso)
-    static JsonObject comandoDeJson(JsonObject acao, JsonObject estado) {
-        for (Map.Entry<String, JsonElement> ent : acao.entrySet()) {
-            String k = ent.getKey();
-            String nova = null;
-            for (String[] par : ANTIGAS) if (par[0].equals(k)) nova = par[1];
-            if (nova != null) {
-                if (k.equals("turn")) {
-                    avisar(k, "use 'direcao' (para onde o tanque deve apontar, em graus) em vez de 'turn'. "
-                            + "A chave antiga ainda funciona.");
-                } else {
-                    avisar(k, "use '" + nova + "' em vez de '" + k + "' na acao. A chave antiga ainda funciona.");
-                }
-            } else if (!NOVAS.contains(k)) {
-                avisar("?" + k, "a acao tem a chave '" + k + "', que nao existe e foi ignorada. "
-                        + "Use: mover, direcao, angulo_torre, atirar, ligar_escudo.");
-            }
-        }
-        JsonObject saida = new JsonObject();
-        saida.addProperty("throttle", limitar(ler(acao, "mover", "throttle")));
-        double direcao = ler(acao, "direcao", null);
-        if (!Double.isNaN(direcao) && !Double.isInfinite(direcao)) {
-            saida.addProperty("turn", turnPara(direcao, num(objeto(estado, "self"), "angle")));
-        } else {
-            saida.addProperty("turn", limitar(ler(acao, null, "turn")));
-        }
-        double torre = ler(acao, "angulo_torre", "turret_angle");
-        if (!Double.isNaN(torre) && !Double.isInfinite(torre)) saida.addProperty("turret_angle", torre);
-        double atirar = ler(acao, "atirar", "shoot");
-        saida.addProperty("shoot", !Double.isNaN(atirar) && atirar != 0.0);
-        double escudo = ler(acao, "ligar_escudo", "shield");
-        saida.addProperty("shield", !Double.isNaN(escudo) && escudo != 0.0);
-        return saida;
-    }
-
-    // ------------------------------------------------------------- pensar()
-    // O build_bot.sh compila primeiro com a API atual; se o bot só tiver a antiga
-    // (JsonObject), troca as três linhas marcadas (MARCA_*) e compila de novo.
-    static final boolean API_ANTIGA = false; //MARCA_API
-    static Arena.Acao pensarNovo(Arena.Estado e) { return CLASS_PLACEHOLDER.pensar(e); } //MARCA_NOVA
-    static JsonObject pensarAntigo(JsonObject j) { return null; } //MARCA_ANTIGA
-
     public static void main(String[] args) {
         Scanner scanner = new Scanner(System.in);
         PrintStream originalOut = System.out;
@@ -253,22 +184,13 @@ public class JavaRunner {
             try {
                 JsonObject estadoArena = gson.fromJson(linha, JsonObject.class);
                 JsonObject comandoSaida = null;
-                if (API_ANTIGA) {
-                    JsonObject r = pensarAntigo(estadoArena);
-                    if (r == null) {
-                        System.err.println("[ERRO NO BOT JAVA]: pensar() devolveu null (neste frame o tanque ficou parado)");
-                    } else {
-                        comandoSaida = comandoDeJson(r, estadoArena);
-                    }
+                Arena.Estado e = estadoDe(estadoArena);
+                Arena.Acao r = CLASS_PLACEHOLDER.pensar(e);
+                if (r == null) {
+                    System.err.println("[ERRO NO BOT JAVA]: pensar() devolveu null; termine com 'return a;' "
+                            + "(neste frame o tanque ficou parado)");
                 } else {
-                    Arena.Estado e = estadoDe(estadoArena);
-                    Arena.Acao r = pensarNovo(e);
-                    if (r == null) {
-                        System.err.println("[ERRO NO BOT JAVA]: pensar() devolveu null; termine com 'return a;' "
-                                + "(neste frame o tanque ficou parado)");
-                    } else {
-                        comandoSaida = comandoDe(r, e);
-                    }
+                    comandoSaida = comandoDe(r, e);
                 }
                 if (comandoSaida != null) {
                     String texto = comandoSaida.toString();

@@ -81,21 +81,10 @@ class _Registro:
         _campo_inexistente(self, nome)
 
 
-# Nomes antigos (em inglês) -> nomes atuais, para a mensagem de erro
-_NOMES_NOVOS = {
-    "tick": "frame", "self": "eu", "enemies": "inimigos", "hazards": "perigos", "items": "itens",
-    "vx": "vel_x", "vy": "vel_y", "angle": "angulo_chassi", "turret_angle": "angulo_torre",
-    "hp": "vida", "energy": "energia", "cooldown": "frames_para_atirar", "shield": "escudo_ativo",
-    "radius": "raio", "timer": "frames_ate_impacto", "duration": "frames_restantes", "type": "tipo",
-}
-
-
 def _campo_inexistente(objeto, nome):
     classe = type(objeto).__name__
     if nome.startswith("__"):
         raise AttributeError(nome)
-    if nome in _NOMES_NOVOS:
-        raise AttributeError(f"o campo '{nome}' agora se chama '{_NOMES_NOVOS[nome]}' ({classe}).")
     raise AttributeError(f"{classe} nao tem o campo '{nome}'.")
 
 
@@ -174,28 +163,24 @@ def _lista(d, chave, classe):
     return [classe(x) for x in v if isinstance(x, dict)]
 
 
-class Estado(dict):
-    """O que o seu tanque enxerga neste frame (os nomes estão no topo deste arquivo).
-
-    Também é um dict com o JSON original da arena (estado["self"], estado["tick"]...),
-    para os bots escritos antes dos nomes em português."""
+class Estado(_Registro):
+    """O que o seu tanque enxerga neste frame (os nomes estão no topo deste arquivo)."""
+    __slots__ = ("frame", "eu", "inimigos", "perigos", "itens", "pontos",
+                 "n_inimigos", "n_perigos", "n_itens", "n_pontos")
 
     def __init__(self, bruto):
-        super().__init__(bruto if isinstance(bruto, dict) else {})
-        self.frame = int(_num(self, "tick"))
-        self.eu = Tanque(self.get("self") if isinstance(self.get("self"), dict) else {})
-        self.inimigos = _lista(self, "enemies", Inimigo)
-        self.perigos = _lista(self, "hazards", Perigo)
-        self.itens = _lista(self, "items", Item)
-        objetivo = self.get("objetivo")
+        d = bruto if isinstance(bruto, dict) else {}
+        self.frame = int(_num(d, "tick"))
+        self.eu = Tanque(d.get("self") if isinstance(d.get("self"), dict) else {})
+        self.inimigos = _lista(d, "enemies", Inimigo)
+        self.perigos = _lista(d, "hazards", Perigo)
+        self.itens = _lista(d, "items", Item)
+        objetivo = d.get("objetivo")
         self.pontos = _lista(objetivo, "pontos", Ponto) if isinstance(objetivo, dict) else []
         self.n_inimigos = len(self.inimigos)
         self.n_perigos = len(self.perigos)
         self.n_itens = len(self.itens)
         self.n_pontos = len(self.pontos)
-
-    def __getattr__(self, nome):
-        _campo_inexistente(self, nome)
 
 
 class Acao:
@@ -219,8 +204,6 @@ class Acao:
 
     def __setattr__(self, nome, valor):
         if nome not in Acao.__slots__:
-            if nome in _CHAVES_ANTIGAS:
-                raise AttributeError(f"o campo '{nome}' da Acao agora se chama '{_CHAVES_ANTIGAS[nome]}'.")
             raise AttributeError(f"a Acao nao tem o campo '{nome}'. Os campos sao: "
                                  "mover, direcao, angulo_torre, atirar, ligar_escudo.")
         object.__setattr__(self, nome, valor)
@@ -233,9 +216,6 @@ class Acao:
 # -----------------------------------------------------------------------------
 # Daqui para baixo: tradução da Acao para o comando da engine (uso interno da arena)
 # -----------------------------------------------------------------------------
-_CHAVES_ANTIGAS = {"throttle": "mover", "turn": "direcao", "turret_angle": "angulo_torre",
-                   "shoot": "atirar", "shield": "ligar_escudo"}
-_CHAVES = ("mover", "direcao", "angulo_torre", "atirar", "ligar_escudo")
 _avisados = set()
 
 
@@ -271,46 +251,21 @@ def _turn_para(direcao, angulo_atual):
 
 
 def _traduzir_acao(acao, estado):
-    """Acao (ou dict com as chaves novas ou antigas) -> dict do protocolo da engine."""
-    if isinstance(acao, Acao):
-        campos = {n: getattr(acao, n) for n in _CHAVES}
-    elif isinstance(acao, dict):
-        campos = {}
-        for chave, valor in acao.items():
-            if chave in _CHAVES:
-                campos[chave] = valor
-            elif chave in _CHAVES_ANTIGAS:
-                nova = _CHAVES_ANTIGAS[chave]
-                if chave == "turn":
-                    _avisar(chave, "use 'direcao' (para onde o tanque deve apontar, em graus) em vez de 'turn'. "
-                                   "A chave antiga ainda funciona.")
-                else:
-                    _avisar(chave, f"use '{nova}' em vez de '{chave}' na acao. A chave antiga ainda funciona.")
-                campos.setdefault("_" + chave, valor)
-            else:
-                _avisar("desconhecida_" + str(chave),
-                        f"a acao tem a chave '{chave}', que nao existe e foi ignorada. "
-                        "Use: mover, direcao, angulo_torre, atirar, ligar_escudo.")
-    else:
+    """Acao -> dict do protocolo da engine."""
+    if not isinstance(acao, Acao):
         raise TypeError(f"pensar() devolveu {type(acao).__name__}; devolva uma Acao (faltou 'return acao'?)")
 
-    eu = estado.eu if isinstance(estado, Estado) else Estado(estado).eu
     saida = {}
-
-    mover = _numero(campos.get("mover", campos.get("_throttle")), "mover")
+    mover = _numero(acao.mover, "mover")
     saida["throttle"] = max(-1.0, min(1.0, mover if mover is not None else 0.0))
 
-    direcao = _numero(campos.get("direcao"), "direcao")
-    if direcao is not None:
-        saida["turn"] = _turn_para(direcao, eu.angulo_chassi)
-    else:
-        turn = _numero(campos.get("_turn"), "turn")
-        saida["turn"] = max(-1.0, min(1.0, turn)) if turn is not None else 0.0
+    direcao = _numero(acao.direcao, "direcao")
+    saida["turn"] = _turn_para(direcao, estado.eu.angulo_chassi) if direcao is not None else 0.0
 
-    torre = _numero(campos.get("angulo_torre", campos.get("_turret_angle")), "angulo_torre")
+    torre = _numero(acao.angulo_torre, "angulo_torre")
     if torre is not None:
         saida["turret_angle"] = torre
 
-    saida["shoot"] = bool(campos.get("atirar", campos.get("_shoot", False)))
-    saida["shield"] = bool(campos.get("ligar_escudo", campos.get("_shield", False)))
+    saida["shoot"] = bool(acao.atirar)
+    saida["shield"] = bool(acao.ligar_escudo)
     return saida

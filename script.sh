@@ -1102,7 +1102,33 @@ for i, nome in enumerate(nomes_bots):
         "hp": float(r.get("hp", 0.0)),
         "vencedor": bool(r.get("vencedor", False)),
         "tick_eliminacao": r.get("tick_eliminacao"),
+        "abatido_por": r.get("abatido_por"),
+        "causa_eliminacao": r.get("causa_eliminacao"),
+        "dano_causado": float(r.get("dano_causado", 0.0)),
     })
+
+# Tanques da partida (equipes e alvos): o rótulo das equipes vira o nome real
+nome_por_id = {b["id"]: b["nome"] for b in bots_info}
+tanques = []
+for t in dados.get("tanques", []):
+    if not isinstance(t, dict):
+        continue
+    t = dict(t)
+    if t.get("controle") == "equipe" and t.get("id") in nome_por_id:
+        t["rotulo"] = nome_por_id[t["id"]]
+    tanques.append(t)
+
+# Dono do replay: quem disparou a partida (o BOCA passa TOPCOM_DONO_*). Equipe: o tanque
+# dela (tank_id), para a Unity mostrar VITÓRIA ou DERROTA; juiz/admin: tank_id null.
+dono_tipo = os.environ.get("TOPCOM_DONO_TIPO", "").strip()
+dono = None
+if dono_tipo in ("equipe", "juiz", "admin"):
+    dono_bot = os.environ.get("TOPCOM_DONO_BOT", "").strip()
+    dono = {
+        "tipo": dono_tipo,
+        "usuario": os.environ.get("TOPCOM_DONO_USUARIO", "").strip(),
+        "tank_id": next((b["id"] for b in bots_info if dono_bot and b["nome"] == dono_bot), None),
+    }
 
 vencedor_real = next((b["nome"] for b in bots_info if b["posicao"] == 1), "Empate")
 excluidos = [{"nome": n, "motivo": m} for n, m in zip(excl_nomes, excl_motivos)]
@@ -1126,7 +1152,7 @@ resumo = {
 
 # 3. match_frames.json unificado (resumo + config + frames), gravado de forma atômica
 #    Modo fase: o bloco "fase" da engine (cenário sorteado) vai no topo; no torneio ele não existe.
-resultado_final = {"config": dados.get("config", {}), **resumo, "frames": frames_lista}
+resultado_final = {"config": dados.get("config", {}), "dono": dono, **resumo, "tanques": tanques, "frames": frames_lista}
 if isinstance(dados.get("fase"), dict):
     resultado_final = {"fase": dados["fase"], **resultado_final}
 tmp_path = match_frames_path + ".tmp"

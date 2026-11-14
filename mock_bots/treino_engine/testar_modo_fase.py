@@ -3,7 +3,8 @@
 
 Copia o orquestrador para uma pasta de trabalho (padrão /tmp/frente_engine/modo_fase),
 roda o script.sh em modo fase com cada bot desta pasta e confere o match_frames.json:
-bloco "fase", alvos inertes com "alvo": true, artilharia nos ticks programados (e a
+bloco "fase", alvos inertes (tanques[] com controle "alvo"), evento ELIMINADO, dano e
+config.hp_max/energy_max, artilharia nos ticks programados (e a
 no_jogador perto do jogador), ausência de laser/itens/zona quando desligados, e a chave
 "objetivo" chegando às 4 linguagens (o bot alcança o primeiro ponto).
 
@@ -89,7 +90,19 @@ def main():
     conferir(alvo["id"] == "A1" and alvo["tank_id"] == 2, "alvo A1 = tanque 2")
     f0 = d["frames"][0]
     t2 = next(t for t in f0["tanks"] if t["id"] == 2)
-    conferir(t2.get("alvo") is True and "alvo" not in jogador(f0), "\"alvo\": true so no tanque-alvo")
+    controles = {t["id"]: t.get("controle") for t in d.get("tanques", [])}
+    conferir(controles == {1: "equipe", 2: "alvo"} and "alvo" not in t2,
+             "tanques[]: 1 = equipe, 2 = alvo (sem flag alvo nos frames)")
+    rot = {t["id"]: t.get("rotulo") for t in d.get("tanques", [])}
+    conferir(rot.get(1) == "visitante" and rot.get(2) == "A1", "rotulos: nome da equipe e A1")
+    elim = [e for fr in d["frames"] for e in fr["events"] if e["type"] == "ELIMINADO" and e["target_id"] == 2]
+    conferir(len(elim) == 1 and elim[0].get("causa") == "TIRO" and elim[0]["source_id"] == 1,
+             "evento ELIMINADO do alvo: causa TIRO, autor 1")
+    conferir(d["bots"][0].get("dano_causado", 0) > 0 and d["bots"][0].get("kills", 0) >= 1,
+             "dano_causado e kills do jogador (alvo conta abate)")
+    conferir(d["config"].get("hp_max") == 100 and d["config"].get("energy_max") == 100, "config.hp_max e energy_max")
+    conferir("cor" not in d["bots"][0] and all("cor" in t for t in d["tanques"]), "cor so em tanques[]")
+    conferir("dono" in d and d["dono"] is None, "dono null sem TOPCOM_DONO_* (engine fora do BOCA)")
     movel = any(abs(next(t for t in fr["tanks"] if t["id"] == 2)["x"] - alvo["x"]) > 1e-9 for fr in d["frames"])
     conferir(not movel, "alvo inerte (nao se move)")
     morto = next((fr["tick"] for fr in d["frames"] if not next(t for t in fr["tanks"] if t["id"] == 2)["alive"]), None)

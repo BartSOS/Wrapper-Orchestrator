@@ -393,8 +393,24 @@ struct Tank {
     bool is_alive = true;
     int consecutive_timeouts = 0;
     int tick_eliminacao = -1; // tick em que foi eliminado (-1 = vivo)
-    bool alvo = false;        // modo fase: tanque inerte da engine (sem bot)
+    // Controle do tanque: "equipe" (um bot decide as ações) ou "alvo" (modo fase: inerte, da
+    // engine). Fisicamente é o mesmo tanque; o alvo só não tem processo, não entra no ranking
+    // e não encerra a partida.
+    bool alvo = false;
+    std::string rotulo;       // alvo: id do arquivo da fase ("A1"); equipe: "Bot_<id>" (o script.sh põe o nome)
+    int abatido_por = -1;     // id do tanque que deu o tiro final (-1 = ambiente ou ainda vivo)
+    std::string causa_eliminacao;  // TIRO, ARTILHARIA, LASER, ZONA, TIMEOUT, DESCONEXAO ("" = vivo)
+    double dano_causado = 0.0;     // vida tirada de outros tanques pelos tiros deste
 };
+
+// Cor fixa por tanque (a mesma no HUD, na tela final e no BOCA): equipes pela paleta da arte,
+// na ordem dos ids; alvos em cinza neutro.
+inline std::string corDoTanque(const Tank& t) {
+    static const char* paleta[] = {"#3DDC84", "#4DABF7", "#FF9F43", "#B197FC",
+                                   "#FF6B9A", "#FFD43B", "#63E6BE", "#E599F7"};
+    if (t.alvo) return "#7D8B99";
+    return paleta[(t.id - 1 + 8) % 8];
+}
 
 struct Projectile {
     int id;
@@ -421,11 +437,13 @@ struct Item {
 };
 
 struct Event {
-    std::string type; // "SHOOT", "HIT", "EXPLOSION", "ITEM_PICKUP", "ARTILLERY_WARN"
+    std::string type; // "SHOOT", "HIT", "EXPLOSION", "ELIMINADO", "ITEM_PICKUP", "ARTILLERY_WARN"
     double x = 0.0;
     double y = 0.0;
     int source_id = -1;
     int target_id = -1;
+    double dano = -1.0;   // HIT: vida que o tiro tirou (0 com escudo); só sai no JSON quando >= 0
+    std::string causa;    // ELIMINADO: TIRO, ARTILHARIA, LASER, ZONA, TIMEOUT, DESCONEXAO
 };
 
 // ============================================================================
@@ -760,6 +778,18 @@ private:
         return pos;
     }
 
+    // Único ponto de eliminação: marca o tanque, guarda autor e causa e gera o evento ELIMINADO
+    // do frame (a Unity monta o feed de abates e a tela final só com ele).
+    void eliminar(Tank& t, const std::string& causa, int autor = -1) {
+        if (!t.is_alive) return;
+        t.is_alive = false;
+        t.abatido_por = autor;
+        t.causa_eliminacao = causa;
+        Event e{"ELIMINADO", t.pos.x, t.pos.y, autor, t.id};
+        e.causa = causa;
+        current_events.push_back(e);
+    }
+
 public:
     // fase_json != nullptr liga o modo fase (1 bot + cenário). Lança std::runtime_error se o
     // cenário for inválido, antes de iniciar qualquer bot.
@@ -794,10 +824,12 @@ public:
                 bots.push_back(std::move(bot));
             } else {
                 // Sem processo não há como jogar: o tanque entra eliminado e aparece no ranking
-                t.is_alive = false;
+                t.rotulo = "Bot_" + std::to_string(t.id);
+                eliminar(t, "DESCONEXAO");
                 t.hp = 0.0;
                 registrarMomento("KILL_DESCONEXAO", "Bot ID [" + std::to_string(t.id) + "] nao pode ser iniciado e foi desativado!", t.id, -1, "[DESCONEXAO]");
             }
+            t.rotulo = "Bot_" + std::to_string(t.id);
             tanks.push_back(t);
         }
 
@@ -811,6 +843,7 @@ public:
                 t.turret_angle = a.angulo;
                 t.hp = a.hp;
                 t.alvo = true;
+                t.rotulo = a.id;
                 tanks.push_back(t);
             }
             for (const auto& f : fase->itens_fixos) {
@@ -821,7 +854,9 @@ public:
         match_replay["config"] = {
             {"arena_width", Config::ARENA_WIDTH},
             {"arena_height", Config::ARENA_HEIGHT},
-            {"max_ticks", fase ? fase->max_ticks : Config::MAX_TICKS}
+            {"max_ticks", fase ? fase->max_ticks : Config::MAX_TICKS},
+            {"hp_max", Config::TANK_MAX_HP},
+            {"energy_max", Config::TANK_MAX_ENERGY}
         };
         match_replay["frames"] = json::array();
     }
@@ -912,7 +947,7 @@ public:
                 if (t.pos.dist(center) > safe_radius) {
                     t.hp -= 2.5; // Dano contínuo fora da zona segura
                     if (t.hp <= 0.0) {
-                        t.is_alive = false;
+                        eliminar(t, "ZONA");
                         registrarMomento("KILL_ZONA", "Bot ID [" + std::to_string(t.id) + "] foi consumido pela tempestade de radiacao!", t.id, -1, "[ZONA]");
                     }
                 }
@@ -982,7 +1017,7 @@ public:
             // Antes este teste vinha depois de um "continue" para processos mortos, e o
             // tanque de um bot encerrado ficava vivo e parado até o fim da partida.
             if (!bot->isAlive()) {
-                tank.is_alive = false;
+                eliminar(tank, "DESCONEXAO");
                 tank.hp = 0.0;
                 registrarMomento("KILL_DESCONEXAO", "Bot ID [" + std::to_string(tank.id) + "] encerrou a conexao com o controlador e foi desativado!", tank.id, -1, "[DESCONEXAO]");
                 continue;
@@ -1064,7 +1099,7 @@ public:
                 tank.consecutive_timeouts++;
                 // Se o bot não responder por 20 ticks seguidos (2 segundos)
                 if (tank.consecutive_timeouts >= 20) {
-                    tank.is_alive = false;
+                    eliminar(tank, "TIMEOUT");
                     tank.hp = 0.0;
                     registrarMomento("KILL_TIMEOUT", "Bot ID [" + std::to_string(tank.id) + "] parou de responder (timeout) e foi desativado!", tank.id, -1, "[TIMEOUT]");
                 }
@@ -1104,21 +1139,28 @@ public:
                 if (!t.is_alive || t.id == it->owner_id) continue;
 
                 if (t.pos.dist(it->pos) <= (Config::TANK_RADIUS + Config::PROJ_RADIUS)) {
+                    // Dano efetivo: o que o tiro tirou da vida (0 com escudo; não conta o excesso
+                    // além da vida que restava)
+                    double dano = 0.0;
                     if (!t.shield_active) {
+                        dano = std::min(Config::PROJ_DAMAGE, std::max(0.0, t.hp));
                         t.hp -= Config::PROJ_DAMAGE;
                     } else {
                         t.energy = std::max(0.0, t.energy - 10.0); // Impacto no escudo absorve energia
                     }
+                    auto atirador = std::find_if(tanks.begin(), tanks.end(),
+                                                 [&](const Tank& k) { return k.id == it->owner_id; });
+                    if (atirador != tanks.end()) atirador->dano_causado += dano;
 
-                    current_events.push_back({"HIT", t.pos.x, t.pos.y, it->owner_id, t.id});
+                    Event hit{"HIT", t.pos.x, t.pos.y, it->owner_id, t.id};
+                    hit.dano = dano;
+                    current_events.push_back(hit);
 
                     if (t.hp <= 0.0) {
-                        t.is_alive = false;
+                        eliminar(t, "TIRO", it->owner_id);
                         current_events.push_back({"EXPLOSION", t.pos.x, t.pos.y, it->owner_id, t.id});
-                        // Atribuição de Kills ao atirador
-                        auto killer = std::find_if(tanks.begin(), tanks.end(),
-                                                   [&](const Tank& k) { return k.id == it->owner_id; });
-                        if (killer != tanks.end()) killer->kills++;
+                        // Atribuição de Kills ao atirador (destruir um alvo do treino também conta)
+                        if (atirador != tanks.end()) atirador->kills++;
 
                         registrarMomento("KILL_PROJETIL", 
                             "Bot ID [" + std::to_string(t.id) + "] foi DESTRUIDO por um disparo certeiro do Bot ID [" + std::to_string(it->owner_id) + "]!", 
@@ -1177,9 +1219,9 @@ public:
                         if (t.is_alive && t.pos.dist(it->pos) <= (it->radius + Config::TANK_RADIUS)) {
                             double dmg = t.shield_active ? Config::ARTILLERY_DAMAGE * 0.2 : Config::ARTILLERY_DAMAGE;
                             t.hp -= dmg;
-                            if (t.hp <= 0.0) 
+                            if (t.hp <= 0.0)
                             {
-                                t.is_alive = false;
+                                eliminar(t, "ARTILHARIA");
                                 registrarMomento("KILL_ARTILHARIA", 
                                     "Bot ID [" + std::to_string(t.id) + "] nao conseguiu escapar e foi PULVERIZADO por um bombardeio de Artilharia!", 
                                     t.id, -1, "[BOMBA]");
@@ -1217,7 +1259,7 @@ public:
                             t.hp -= dmg;
                             if (t.hp <= 0.0)
                             {
-                                t.is_alive = false;
+                                eliminar(t, "LASER");
                                 registrarMomento("KILL_LASER", 
                                     "Bot ID [" + std::to_string(t.id) + "] entrou no caminho do feixe orbital e foi DERRETIDO pelo Laser!", 
                                     t.id, -1, "[LASER]");
@@ -1250,7 +1292,7 @@ public:
                 {"hp", t.hp}, {"energy", t.energy},
                 {"shield", t.shield_active}, {"kills", t.kills}, {"alive", t.is_alive}
             };
-            if (t.alvo) tj["alvo"] = true;   // só existe no modo fase
+            // Quem é equipe e quem é alvo está em tanques[] (cabeçalho), não por frame
             frame["tanks"].push_back(tj);
         }
 
@@ -1283,10 +1325,13 @@ public:
 
         frame["events"] = json::array();
         for (const auto& e : current_events) {
-            frame["events"].push_back({
+            json ej = {
                 {"type", e.type}, {"x", e.x}, {"y", e.y},
                 {"source_id", e.source_id}, {"target_id", e.target_id}
-            });
+            };
+            if (e.dano >= 0.0) ej["dano"] = e.dano;
+            if (!e.causa.empty()) ej["causa"] = e.causa;
+            frame["events"].push_back(ej);
         }
 
         match_replay["frames"].push_back(frame);
@@ -1385,7 +1430,22 @@ public:
                 {"kills", t.kills},
                 {"hp", std::max(0.0, t.hp)},
                 {"vencedor", posicao == 1},
-                {"tick_eliminacao", t.tick_eliminacao < 0 ? json(nullptr) : json(t.tick_eliminacao)}
+                {"tick_eliminacao", t.tick_eliminacao < 0 ? json(nullptr) : json(t.tick_eliminacao)},
+                {"abatido_por", t.abatido_por < 0 ? json(nullptr) : json(t.abatido_por)},
+                {"causa_eliminacao", t.causa_eliminacao.empty() ? json(nullptr) : json(t.causa_eliminacao)},
+                {"dano_causado", t.dano_causado}
+            });
+        }
+
+        // Todos os tanques da partida (equipes e alvos), para a Unity criar cada um antes do
+        // primeiro frame. O script.sh troca o rótulo "Bot_<id>" pelo nome da equipe.
+        json tanques = json::array();
+        for (const auto& t : tanks) {
+            tanques.push_back({
+                {"id", t.id},
+                {"controle", t.alvo ? "alvo" : "equipe"},
+                {"rotulo", t.rotulo},
+                {"cor", corDoTanque(t)}
             });
         }
 
@@ -1433,6 +1493,7 @@ public:
         match_replay["turnos"] = tick_count;
         match_replay["duracao_ms"] = static_cast<int>(tick_count * Config::TICK_DT * 1000);
         match_replay["bots"] = ranking;
+        match_replay["tanques"] = tanques;
         if (fase) match_replay["fase"] = fase->paraJson();
 
         std::ofstream file("match_frames.json");

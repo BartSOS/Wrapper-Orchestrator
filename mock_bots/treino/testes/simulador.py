@@ -171,7 +171,7 @@ def simular(fase, pensar, seed, morrer_no_tick=None):
                   "energy": eu["energy"], "shield": False, "kills": eu["kills"], "alive": eu["alive"]}]
         for a in alvos:
             tanks.append({"id": a["tank_id"], "x": a["x"], "y": a["y"], "angle": 0.0, "turret": 0.0, "hp": a["hp"],
-                          "energy": 100.0, "shield": False, "kills": 0, "alive": a["alive"], "alvo": True})
+                          "energy": 100.0, "shield": False, "kills": 0, "alive": a["alive"]})
         frames.append({"tick": tick, "tanks": tanks, "projectiles": [dict(p) for p in projeteis],
                        "hazards": [dict(h) for h in hazards], "items": [], "events": eventos})
         if not eu["alive"]:
@@ -181,6 +181,8 @@ def simular(fase, pensar, seed, morrer_no_tick=None):
                  "alvos": [{"id": a["id"], "tank_id": a["tank_id"], "x": a["x"], "y": a["y"]} for a in alvos],
                  "artilharia": art_efetiva},
         "config": {}, "frames": frames, "seed": seed, "turnos": len(frames),
+        "tanques": [{"id": 1, "controle": "equipe", "rotulo": "Bot_1"}] +
+                   [{"id": a["tank_id"], "controle": "alvo", "rotulo": a["id"]} for a in alvos],
     }
 
 

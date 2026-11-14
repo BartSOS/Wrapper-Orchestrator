@@ -17,7 +17,7 @@
 // que o replay não traz). Nesse caso o stdout traz {"fase", "erro"} e o stderr a mensagem.
 //
 // Regras (documentadas também no SKILL.md da boca-gerenciar-engine):
-// - Jogador = o tanque dos frames sem "alvo": true (e fora de fase.alvos[].tank_id).
+// - Jogador = o tanque dos frames fora de fase.alvos[].tank_id (tanques[] com controle "equipe").
 // - Pontos e alvos efetivos (já sorteados) vêm do bloco "fase" do match_frames.json; se ele
 //   faltar, valem os números fixos do cenário do fase.json (faixa [min,max] sem o bloco = erro).
 // - chegar / ficar_no_raio / visitar_em_ordem: distância do CENTRO do tanque ao ponto <= raio.
@@ -414,7 +414,7 @@ private:
             for (const auto& t : fr["tanks"]) {
                 if (!t.contains("id") || !t["id"].is_number_integer()) continue;
                 int tid = t["id"].get<int>();
-                if (t.value("alvo", false) || idsAlvo_.count(tid)) continue;
+                if (idsAlvo_.count(tid)) continue;
                 jogadorId_ = tid;
                 break;
             }

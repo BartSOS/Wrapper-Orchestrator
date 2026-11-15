@@ -257,6 +257,28 @@ resultado_job() {
     fi
 }
 
+# Etapas da partida para o log (contrato lido pelo portal e pelo executor da arena): no começo de cada
+# etapa, uma linha "[ETAPA] <nome>" sozinha e sem cor; no fim, "[TEMPO] <etapa> <ms>". Ordem real:
+# preparando, compilando, partida, replay, avaliando (só com TOPCOM_FASE) e fim ("[TEMPO] total <ms>").
+ETAPA_ATUAL=""
+ETAPA_T0=0
+ETAPA_T_INICIO="$(date +%s%N)"
+etapa() {
+    local agora
+    agora="$(date +%s%N)"
+    if [[ -n "${ETAPA_ATUAL}" ]]; then
+        echo "[TEMPO] ${ETAPA_ATUAL} $(( (agora - ETAPA_T0) / 1000000 ))"
+    fi
+    echo "[ETAPA] $1"
+    if [[ "$1" == "fim" ]]; then
+        echo "[TEMPO] total $(( (agora - ETAPA_T_INICIO) / 1000000 ))"
+        ETAPA_ATUAL=""
+    else
+        ETAPA_ATUAL="$1"
+    fi
+    ETAPA_T0="${agora}"
+}
+
 # ==============================================================================
 # 1. VERIFICAÇÃO DE DEPENDÊNCIAS
 # ==============================================================================
@@ -490,6 +512,7 @@ compilar_engine() {
             exit 1
         fi
         echo "${ass_engine}" > "${ENGINE_ASSINATURA}"
+        echo "[TEMPO] compilar engine ${JOB_MS}"
         echo -e "${TAG_OK} Engine compilada com sucesso em: ${ENGINE_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
     else
         echo -e "${TAG_OK} Engine reaproveitada (fontes, compilador e flags inalterados): ${ENGINE_BIN}"
@@ -500,6 +523,7 @@ compilar_engine() {
         if [[ ${JOB_RC} -eq 0 ]]; then
             echo "${ass_avaliar}" > "${AVALIAR_ASSINATURA}"
             AVALIAR_PRONTO=1
+            echo "[TEMPO] compilar avaliador ${JOB_MS}"
             echo -e "${TAG_OK} Avaliador da fase compilado em: ${AVALIAR_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
         else
             echo -e "  ${TAG_AVISO} Falha ao compilar o avaliador da fase; a fase roda sem avaliacao:"
@@ -512,6 +536,7 @@ compilar_engine() {
     for lang in ${langs}; do
         resultado_job "${log_wrappers}_${lang}.log"
         if [[ ${JOB_RC} -eq 0 ]]; then
+            echo "[TEMPO] compilar wrapper ${lang} ${JOB_MS}"
             echo -e "  ${TAG_OK} Wrapper pre-compilado (${lang}) pronto em build/wrappers/${lang} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
         else
             echo -e "  ${TAG_AVISO} Falha ao pre-compilar o wrapper (${lang}); os bots dessa linguagem tentarao de novo:"
@@ -880,6 +905,7 @@ preparar_bots() {
                 ARQS_ENTRARAM+=("$bname")
                 LANGS_ENTRARAM+=("${lang_name}")
                 if [[ ${ISOLADO} -eq 1 ]]; then DIRS_BOTS+=("${CAND_DIR[$i]}"); fi
+                echo "[TEMPO] compilar ${lang_name} ${team} ${JOB_MS}"
                 echo -e "    ${TAG_OK} Preparacao '${lang_name}' concluida em $(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s -> ${bin_out}"
             else
                 local err_resumo
@@ -1270,14 +1296,22 @@ EOF
 }
 
 # --- Execução Principal ---
+etapa preparando
 calcular_jobs
 verificar_dependencias
 baixar_bibliotecas
 coletar_candidatos
+etapa compilando
 compilar_engine
 isolamento_preparar
 preparar_bots
+etapa partida
 executar_batalha
 isolamento_relatorio
+etapa replay
 exibir_resumo_e_gerar_json
+if [[ -n "${FASE_ARQ}" ]]; then
+    etapa avaliando
+fi
 avaliar_fase
+etapa fim

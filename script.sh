@@ -257,6 +257,63 @@ resultado_job() {
     fi
 }
 
+# ------------------------------------------------------------------------------
+# Cache entre partidas (TOPCOM_CACHE_DIR; só o executor da arena define): pasta do root, 0700, que
+# sobrevive entre pedidos. Guarda a engine, o avaliador, os wrappers C/C++ pré-compilados e os bots já
+# compilados, cada um numa entrada de primeiro nível <grupo>-<chave>/{arquivo,sha256[,log]} (a faxina
+# do executor apaga entradas de primeiro nível pela mais antiga; o acerto dá touch) gravada pelo root
+# (cópia atômica) e conferida pelo sha256 ao voltar. Sem a variável (ou sem pasta gravável) nada muda.
+# ------------------------------------------------------------------------------
+# TOPCOM_WRAPPERS_CACHE só existe pelo env do --preparar (abaixo): nunca herdada de fora, nem pela compilação dos bots.
+unset TOPCOM_WRAPPERS_CACHE
+CACHE_DIR="${TOPCOM_CACHE_DIR:-}"
+if [[ -n "${CACHE_DIR}" ]]; then
+    if [[ -d "${CACHE_DIR}" && ! -L "${CACHE_DIR}" && -w "${CACHE_DIR}" ]]; then
+        CACHE_DIR="$(cd "${CACHE_DIR}" && pwd)"
+    else
+        echo "[AVISO] TOPCOM_CACHE_DIR ('${CACHE_DIR}') nao e uma pasta gravavel; sem cache nesta partida."
+        CACHE_DIR=""
+    fi
+fi
+CACHE_LOG=""
+
+# cache_buscar <grupo> <chave> <destino>: copia a entrada para <destino> (0 = achou e o sha256 confere)
+cache_buscar() {
+    [[ -n "${CACHE_DIR}" ]] || return 1
+    local d="${CACHE_DIR}/$1-$2"
+    CACHE_LOG=""
+    [[ -d "$d" && ! -L "$d" && -f "$d/arquivo" && ! -L "$d/arquivo" && -f "$d/sha256" ]] || return 1
+    if [[ "$(sha256sum < "$d/arquivo" | cut -d' ' -f1)" != "$(cat "$d/sha256" 2> /dev/null)" ]]; then
+        rm -rf -- "${d:?}"   # entrada corrompida: some, e a compilação normal refaz
+        return 1
+    fi
+    cp -- "$d/arquivo" "$3.cache.tmp" 2> /dev/null || return 1
+    mv -f "$3.cache.tmp" "$3" || return 1
+    [[ -f "$d/log" ]] && CACHE_LOG="$d/log"
+    touch -- "$d" 2> /dev/null || true
+    return 0
+}
+
+# cache_gravar <grupo> <chave> <max_entradas> <arquivo> [<log>]: grava a entrada (troca atômica) e
+# apaga as mais antigas além de <max_entradas>. Falha de gravação nunca derruba a partida.
+cache_gravar() {
+    [[ -n "${CACHE_DIR}" && -f "$4" && ! -L "$4" ]] || return 0
+    local g="$1" k="$2" max="$3" tmp
+    [[ -d "${CACHE_DIR}/${g}-${k}" ]] && return 0
+    tmp="$(mktemp -d "${CACHE_DIR}/.novo.XXXXXX" 2> /dev/null)" || return 0
+    if cp -- "$4" "$tmp/arquivo" 2> /dev/null \
+       && sha256sum < "$tmp/arquivo" | cut -d' ' -f1 > "$tmp/sha256" \
+       && { [[ -z "${5:-}" || ! -f "${5:-}" ]] || cp -- "$5" "$tmp/log" 2> /dev/null || true; } \
+       && chmod 0700 "$tmp" && mv -T -- "$tmp" "${CACHE_DIR}/${g}-${k}" 2> /dev/null; then
+        ls -1t "${CACHE_DIR}" 2> /dev/null | grep -E "^${g}-[0-9a-f]{64}\$" | tail -n +$(( max + 1 )) | while read -r velho; do
+            rm -rf -- "${CACHE_DIR:?}/${velho:?}"
+        done
+    else
+        rm -rf -- "${tmp:?}"
+    fi
+    return 0
+}
+
 # Etapas da partida para o log (contrato lido pelo portal e pelo executor da arena): no começo de cada
 # etapa, uma linha "[ETAPA] <nome>" sozinha e sem cor; no fim, "[TEMPO] <etapa> <ms>". Ordem real:
 # preparando, compilando, partida, replay, avaliando (só com TOPCOM_FASE) e fim ("[TEMPO] total <ms>").
@@ -471,6 +528,15 @@ compilar_engine() {
     if [[ -x "${ENGINE_BIN}" && "$(cat "${ENGINE_ASSINATURA}" 2>/dev/null)" == "${ass_engine}" ]]; then
         compilar=0
     fi
+    # build/ novo (cada partida do portal costuma vir numa pasta nova): tenta o cache da réplica
+    local engine_do_cache=0
+    if [[ ${compilar} -eq 1 ]] && cache_buscar engine "${ass_engine}" "${ENGINE_BIN}"; then
+        chmod 0755 -- "${ENGINE_BIN}"
+        echo "${ass_engine}" > "${ENGINE_ASSINATURA}"
+        compilar=0
+        engine_do_cache=1
+        echo "[TEMPO] compilar engine 0 (cache)"
+    fi
 
     local log_engine="${DIR_LOGS}/_engine.log"
     local log_wrappers="${DIR_LOGS}/_wrappers"
@@ -488,6 +554,11 @@ compilar_engine() {
             ass_avaliar="$( { g++ --version | head -n 1; echo "${ENGINE_FLAGS[*]}"; cat "${AVALIAR_SRC}" "${NLOHMANN_HPP}" 2>/dev/null; } | sha256sum | cut -d' ' -f1 )"
             if [[ -x "${AVALIAR_BIN}" && "$(cat "${AVALIAR_ASSINATURA}" 2>/dev/null)" == "${ass_avaliar}" ]]; then
                 AVALIAR_PRONTO=1
+            elif cache_buscar avaliar_fase "${ass_avaliar}" "${AVALIAR_BIN}"; then
+                chmod 0755 -- "${AVALIAR_BIN}"
+                echo "${ass_avaliar}" > "${AVALIAR_ASSINATURA}"
+                AVALIAR_PRONTO=1
+                echo "[TEMPO] compilar avaliador 0 (cache)"
             else
                 compilar_avaliar=1
                 rm -f "${AVALIAR_ASSINATURA}"
@@ -500,7 +571,9 @@ compilar_engine() {
     local langs lang
     langs="$(langs_com_wrapper)"
     for lang in ${langs}; do
-        pool_rodar "${log_wrappers}_${lang}.log" bash "${BUILD_SCRIPT}" --preparar "${lang}"
+        # TOPCOM_WRAPPERS_CACHE: o build_bot.sh restaura/grava o wrapper pré-compilado no cache (vazio = sem cache)
+        pool_rodar "${log_wrappers}_${lang}.log" env TOPCOM_WRAPPERS_CACHE="${CACHE_DIR}" \
+            bash "${BUILD_SCRIPT}" --preparar "${lang}"
     done
     pool_esperar
 
@@ -514,6 +587,9 @@ compilar_engine() {
         echo "${ass_engine}" > "${ENGINE_ASSINATURA}"
         echo "[TEMPO] compilar engine ${JOB_MS}"
         echo -e "${TAG_OK} Engine compilada com sucesso em: ${ENGINE_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
+        cache_gravar engine "${ass_engine}" 2 "${ENGINE_BIN}"
+    elif [[ ${engine_do_cache} -eq 1 ]]; then
+        echo -e "${TAG_OK} Engine restaurada do cache da replica: ${ENGINE_BIN}"
     else
         echo -e "${TAG_OK} Engine reaproveitada (fontes, compilador e flags inalterados): ${ENGINE_BIN}"
     fi
@@ -525,6 +601,7 @@ compilar_engine() {
             AVALIAR_PRONTO=1
             echo "[TEMPO] compilar avaliador ${JOB_MS}"
             echo -e "${TAG_OK} Avaliador da fase compilado em: ${AVALIAR_BIN} ($(awk "BEGIN {printf \"%.1f\", ${JOB_MS}/1000}")s)"
+            cache_gravar avaliar_fase "${ass_avaliar}" 2 "${AVALIAR_BIN}"
         else
             echo -e "  ${TAG_AVISO} Falha ao compilar o avaliador da fase; a fase roda sem avaliacao:"
             grep -i "error" "${log_avaliar}" 2>/dev/null | head -n 5 | sed 's/^/      /' || true

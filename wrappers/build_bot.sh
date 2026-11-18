@@ -99,6 +99,55 @@ dir_cache_gravavel() {
 CACHE_C=""
 CACHE_CPP=""
 
+# Cache entre partidas (só o script.sh da arena define TOPCOM_WRAPPERS_CACHE, na etapa do root, antes de
+# qualquer bot rodar; vazio = sem cache, tudo igual a antes). Entrada de primeiro nível (a faxina do executor
+# apaga por ela): wrappers-<lang>-<assinatura>/{arquivos,sha256sums}.
+WRAPPERS_CACHE="${TOPCOM_WRAPPERS_CACHE:-}"
+
+# restaurar_do_cache <lang> <assinatura> <arquivos...>: copia os arquivos do cache (sha256 conferido) para o
+# diretório de build, grava a assinatura e deixa o diretório em RESTAURADO_DIR. Falha = compilar normalmente.
+RESTAURADO_DIR=""
+restaurar_do_cache() {
+    local lang="$1" ass="$2"; shift 2
+    [[ -n "${WRAPPERS_CACHE}" ]] || return 1
+    local src="${WRAPPERS_CACHE}/wrappers-${lang}-${ass}" f dir
+    [[ -d "$src" && ! -L "$src" && -f "$src/sha256sums" ]] || return 1
+    for f in "$@"; do
+        [[ -f "$src/$f" && ! -L "$src/$f" ]] || return 1
+    done
+    (cd "$src" && sha256sum -c --quiet sha256sums > /dev/null 2>&1) || return 1
+    dir="$(dir_cache_gravavel "$lang")"
+    rm -f "${dir}/assinatura"
+    for f in "$@"; do
+        cp -- "$src/$f" "${dir}/$f.cache.tmp" 2> /dev/null && mv -f "${dir}/$f.cache.tmp" "${dir}/$f" || return 1
+    done
+    echo "$ass" > "${dir}/assinatura"
+    touch -- "$src" 2> /dev/null || true
+    RESTAURADO_DIR="$dir"
+}
+
+# gravar_no_cache <lang> <assinatura> <diretório de build> <arquivos...>: troca atômica; mantém as 2 mais novas
+gravar_no_cache() {
+    local lang="$1" ass="$2" dir="$3"; shift 3
+    [[ -n "${WRAPPERS_CACHE}" ]] || return 0
+    local base="${WRAPPERS_CACHE}" tmp f
+    [[ -d "${base}/wrappers-${lang}-${ass}" ]] && return 0
+    tmp="$(mktemp -d "${base}/.novo.XXXXXX" 2> /dev/null)" || return 0
+    for f in "$@"; do
+        cp -- "${dir}/$f" "${tmp}/$f" 2> /dev/null || { rm -rf -- "${tmp:?}"; return 0; }
+    done
+    (cd "$tmp" && sha256sum -- "$@" > sha256sums) 2> /dev/null || { rm -rf -- "${tmp:?}"; return 0; }
+    chmod 0700 -- "$tmp" 2> /dev/null || true
+    if mv -T -- "$tmp" "${base}/wrappers-${lang}-${ass}" 2> /dev/null; then
+        ls -1t "$base" 2> /dev/null | grep -E "^wrappers-${lang}-[0-9a-f]{64}\$" | tail -n +3 | while read -r velho; do
+            rm -rf -- "${base:?}/${velho:?}"
+        done
+    else
+        rm -rf -- "${tmp:?}"
+    fi
+    return 0
+}
+
 preparar_c() {
     [[ -z "$CACHE_C" ]] || return 0
     local dir="${DIR_PREBUILT}/c"
@@ -108,11 +157,16 @@ preparar_c() {
         CACHE_C="$dir"
         return 0
     fi
+    if restaurar_do_cache c "$ass" c_wrapper.o; then
+        CACHE_C="${RESTAURADO_DIR}"
+        return 0
+    fi
     dir="$(dir_cache_gravavel c)"
     rm -f "${dir}/assinatura"
     compilar_para "${dir}/c_wrapper.o" \
         g++ "${CXX_FLAGS[@]}" -I"${DIR_WRAPPERS}" -I"${NLOHMANN_INC}" -c "${DIR_WRAPPERS}/c_wrapper.cpp"
     echo "$ass" > "${dir}/assinatura"
+    gravar_no_cache c "$ass" "$dir" c_wrapper.o
     CACHE_C="$dir"
 }
 
@@ -127,6 +181,10 @@ preparar_cpp() {
         CACHE_CPP="$dir"
         return 0
     fi
+    if restaurar_do_cache cpp "$ass" cpp_header.hpp cpp_header.hpp.gch cpp_footer.o; then
+        CACHE_CPP="${RESTAURADO_DIR}"
+        return 0
+    fi
     dir="$(dir_cache_gravavel cpp)"
     rm -f "${dir}/assinatura"
     # O .gch só é usado quando está ao lado do cabeçalho passado em -include
@@ -137,6 +195,7 @@ preparar_cpp() {
         g++ "${CXX_FLAGS[@]}" -I"${NLOHMANN_INC}" -I"${DIR_WRAPPERS}" -include "${dir}/cpp_header.hpp" -Winvalid-pch \
             -c "${DIR_WRAPPERS}/cpp_footer.cpp"
     echo "$ass" > "${dir}/assinatura"
+    gravar_no_cache cpp "$ass" "$dir" cpp_header.hpp cpp_header.hpp.gch cpp_footer.o
     CACHE_CPP="$dir"
 }
 

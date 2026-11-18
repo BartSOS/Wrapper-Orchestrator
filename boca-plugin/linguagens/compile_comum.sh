@@ -21,7 +21,11 @@
 #            GAMEJAM_USUARIO_VALIDADOR, GAMEJAM_TEMPO_COMPILACAO.
 # ==============================================================================
 
-PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Sem fork a mais: dirname, basename, tr e id viram expansoes do bash ($EUID, ${x%/*}, ${x,,}).
+_origem="${BASH_SOURCE[0]}"
+_dir=.
+[[ "$_origem" == */* ]] && _dir="${_origem%/*}"
+PKG_DIR="$(cd "${_dir:-/}" && pwd)"
 BUILD_BOT="${PKG_DIR}/wrappers/build_bot.sh"
 USUARIO="${GAMEJAM_USUARIO_VALIDADOR:-bocajail}"
 LIMITE="${GAMEJAM_TEMPO_COMPILACAO:-50}"
@@ -31,11 +35,16 @@ LIMITE="${GAMEJAM_TEMPO_COMPILACAO:-50}"
 # usuário em /tmp, aquecido na primeira validação.
 if [[ -z "${TOPCOM_WRAPPERS_BUILD:-}" ]]; then
     TOPCOM_WRAPPERS_BUILD="/var/cache/gamejam-validador"
-    if ! mkdir -p "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || [[ ! -w "$TOPCOM_WRAPPERS_BUILD" && "$(id -u)" != "0" ]]; then
-        TOPCOM_WRAPPERS_BUILD="/tmp/gamejam-validador-$(id -u)"
+    if ! { [[ -d "$TOPCOM_WRAPPERS_BUILD" ]] || mkdir -p "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null; } \
+        || [[ ! -w "$TOPCOM_WRAPPERS_BUILD" && $EUID -ne 0 ]]; then
+        TOPCOM_WRAPPERS_BUILD="/tmp/gamejam-validador-$EUID"
     fi
 fi
 export TOPCOM_WRAPPERS_BUILD
+
+# Modo de validacao rapida (ligador gold, JVM enxuta no javac/jar): so tem efeito se o wrappers/build_bot.sh
+# do pacote o entender, e nao muda veredito nem mensagem. GAMEJAM_VALIDACAO_RAPIDA=0 desliga.
+export GAMEJAM_VALIDACAO_RAPIDA="${GAMEJAM_VALIDACAO_RAPIDA:-1}"
 
 case "${LINGUAGEM:-}" in
     c|cpp|java|py) ;;
@@ -49,7 +58,8 @@ fi
 
 # Roda como root dentro do jail? Então rebaixa o privilégio da compilação.
 rebaixar=0
-if [[ "$(id -u)" == "0" ]] && id "$USUARIO" >/dev/null 2>&1; then
+GID_USUARIO=""
+if [[ $EUID -eq 0 ]] && GID_USUARIO="$(id -g "$USUARIO" 2>/dev/null)"; then
     rebaixar=1
 fi
 
@@ -57,7 +67,7 @@ fi
 executar_como_usuario() {
     local trabalho="$1"; shift
     if [[ $rebaixar -eq 1 ]]; then
-        env HOME="$trabalho" TMPDIR="$trabalho" setpriv --reuid="$USUARIO" --regid="$(id -g "$USUARIO")" \
+        env HOME="$trabalho" TMPDIR="$trabalho" setpriv --reuid="$USUARIO" --regid="$GID_USUARIO" \
             --init-groups --no-new-privs "$@"
     else
         "$@"
@@ -66,28 +76,25 @@ executar_como_usuario() {
 
 # O cache pertence ao usuário da compilação: ele mesmo o reconstrói se a assinatura mudar
 preparar_cache() {
-    mkdir -p "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || true
+    [[ -d "$TOPCOM_WRAPPERS_BUILD" ]] || mkdir -p "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || true
     if [[ $rebaixar -eq 1 ]]; then
-        chown "$USUARIO" "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || true
         chown -R "$USUARIO" "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || true
     fi
     chmod 755 "$TOPCOM_WRAPPERS_BUILD" 2>/dev/null || true
 }
 
+# Define TRABALHO (sem subshell); o mktemp -d ja cria o diretorio com modo 700.
 novo_trabalho() {
-    local t
-    t="$(mktemp -d /tmp/gamejam_val_XXXXXX)" || exit 1
-    chmod 700 "$t"
+    TRABALHO="$(mktemp -d /tmp/gamejam_val_XXXXXX)" || exit 1
     if [[ $rebaixar -eq 1 ]]; then
-        chown "$USUARIO" "$t"
+        chown "$USUARIO" "$TRABALHO"
     fi
-    echo "$t"
 }
 
 # --- Modo de preparação ------------------------------------------------------
 if [[ "${1:-}" == "--preparar" ]]; then
     preparar_cache
-    TRABALHO="$(novo_trabalho)"
+    novo_trabalho
     trap 'rm -rf -- "${TRABALHO:?}"' EXIT
     ( cd "$TRABALHO" && executar_como_usuario "$TRABALHO" timeout -k 3 "${GAMEJAM_TEMPO_PREPARO:-300}" \
         bash "$BUILD_BOT" --preparar "$LINGUAGEM" )
@@ -108,13 +115,14 @@ if [[ -z "$FONTE" || ! -f "$FONTE" ]]; then
 fi
 
 preparar_cache
-TRABALHO="$(novo_trabalho)"
+novo_trabalho
 trap 'rm -rf -- "${TRABALHO:?}"' EXIT
 
 # Nome do arquivo: o original (mensagens do compilador mais claras) se a extensão bater com a linguagem
-NOME="$(basename -- "$FONTE")"
+NOME="${FONTE##*/}"
 EXT_ESPERADA="$LINGUAGEM"
-EXT_NOME="$(echo "${NOME##*.}" | tr '[:upper:]' '[:lower:]')"
+EXT_NOME="${NOME##*.}"
+EXT_NOME="${EXT_NOME,,}"
 if [[ "$NOME" != *.* || "$EXT_NOME" != "$EXT_ESPERADA" ]]; then
     NOME="solution.${EXT_ESPERADA}"
 fi
